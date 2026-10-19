@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urlsplit
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +49,73 @@ class RuntimePaths:
     event_db: Path
     twin_ui: Path
     agent_ui: Path
+
+
+@dataclass(frozen=True)
+class RuntimeSettings:
+    twin_api_url: str
+    startup_derate: float
+    startup_load_mult: float
+    twin_port: int
+    agent_port: int
+    contingency_interval_seconds: int
+    proposal_ttl_seconds: int
+
+
+def _positive_float(name: str, default: str, environment: Mapping[str, str]) -> float:
+    try:
+        result = float(environment.get(name, default))
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a finite positive number") from None
+    if not math.isfinite(result) or result <= 0:
+        raise ValueError(f"{name} must be a finite positive number")
+    return result
+
+
+def _positive_int(name: str, default: str, environment: Mapping[str, str], *, maximum: int | None = None) -> int:
+    raw = environment.get(name, default)
+    if not raw.isascii() or not raw.isdecimal():
+        raise ValueError(f"{name} must be a positive integer")
+    result = int(raw)
+    if result < 1 or (maximum is not None and result > maximum):
+        raise ValueError(f"{name} must be a positive integer in range")
+    return result
+
+
+def _http_url(name: str, default: str, environment: Mapping[str, str]) -> str:
+    value = environment.get(name, default)
+    try:
+        url = urlsplit(value)
+        valid = (
+            url.scheme in {"http", "https"}
+            and bool(url.hostname)
+            and not any(character.isspace() for character in value)
+            and url.username is None
+            and url.password is None
+            and not url.query
+            and not url.fragment
+            and (url.port is None or 1 <= url.port <= 65535)
+        )
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError(f"{name} must be an HTTP(S) URL without credentials or query parameters")
+    return value.rstrip("/")
+
+
+def runtime_settings(environment: Mapping[str, str] | None = None) -> RuntimeSettings:
+    """Parse source-compatible local settings without echoing untrusted values."""
+    env = os.environ if environment is None else environment
+    operation_mode(env)
+    return RuntimeSettings(
+        twin_api_url=_http_url("DIGITAL_TWIN_API_URL", "http://127.0.0.1:8001", env),
+        startup_derate=_positive_float("SWING_STARTUP_DERATE", "0.15", env),
+        startup_load_mult=_positive_float("SWING_STARTUP_LOAD_MULT", "1.4", env),
+        twin_port=_positive_int("SWING_TWIN_PORT", "8001", env, maximum=65535),
+        agent_port=_positive_int("SWING_AGENT_PORT", "8002", env, maximum=65535),
+        contingency_interval_seconds=_positive_int("SWING_CONTINGENCY_INTERVAL_SECONDS", "30", env),
+        proposal_ttl_seconds=_positive_int("SWING_PROPOSAL_TTL_SECONDS", "300", env),
+    )
 
 
 def runtime_paths(environment: Mapping[str, str] | None = None) -> RuntimePaths:
