@@ -8,4 +8,6 @@ Changing simulated load, generator dispatch, line status, or stress settings is 
 
 Until those safeguards pass, run the services on loopback in a private local environment. A public endpoint must fail closed for writes without verified operator identity and approved action context. External SCADA, utility telemetry, or equipment-control connectors are outside this project; adding any such integration requires separate review and authorization.
 
+`SWING_OPERATION_MODE` defaults to `simulation`. It accepts only that exact value; blank, false-like, or unknown values fail configuration validation. This setting does not bypass the separate authentication requirement for a hosted simulator. No equipment-control mode exists in this repository.
+
 Forecasts, risk scores, regulatory retrieval, and AI-generated text are decision aids. Preserve the supplied scientific definitions unless a documented defect justifies a change. Do not present historical CSV or training-window predictions as live measurements, or a regulatory summary as legal certification.

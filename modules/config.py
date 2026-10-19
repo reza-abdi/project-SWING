@@ -9,6 +9,16 @@ from typing import Mapping
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_OPERATION_MODE = "simulation"
+
+
+def operation_mode(environment: Mapping[str, str] | None = None) -> str:
+    """Allow only the supplied software simulator, including on hosted deployments."""
+    env = os.environ if environment is None else environment
+    mode = env.get("SWING_OPERATION_MODE", DEFAULT_OPERATION_MODE)
+    if mode != DEFAULT_OPERATION_MODE:
+        raise ValueError("SWING_OPERATION_MODE must be 'simulation'")
+    return mode
 
 
 def resolve_project_path(value: str | Path, *, root: Path = PROJECT_ROOT) -> Path:
@@ -42,6 +52,7 @@ class RuntimePaths:
 def runtime_paths(environment: Mapping[str, str] | None = None) -> RuntimePaths:
     """Return input and runtime paths without creating files or loading artifacts."""
     env = os.environ if environment is None else environment
+    operation_mode(env)
     data = _path_setting("SWING_DATA_DIR", PROJECT_ROOT / "data", env)
     return RuntimePaths(
         root=PROJECT_ROOT,
