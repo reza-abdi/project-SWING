@@ -1,3 +1,12 @@
+[project]
+name = "project-swing"
+version = "0.0.0"
+description = "Project SWING simulation and decision-support system"
+requires-python = ">=3.12,<3.13"
+
+# The supplied SAC policy metadata records training under Python 3.10.20.
+# Real policy inference compatibility is checked after trusted artifacts and dependencies are restored.
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
