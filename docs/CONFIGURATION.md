@@ -1,0 +1,15 @@
+# Configuration and local runtime
+
+Copy `.env.example` to an untracked `.env` only when local overrides are needed. Keep API keys, session secrets, and service tokens out of Git, CI logs, browser JavaScript, and screenshots. Empty entries in the example mean the feature is not configured; they are not usable credentials.
+
+The app is a simulator. `SWING_OPERATION_MODE=simulation` is the only supported value. The safe default binds both APIs to loopback. `SWING_AUTH_MODE=disabled_local_only` is valid only for loopback/private local work; a public write-enabled deployment needs a verified identity provider or protected reverse proxy, exact allowed origins, and server-side authorization of each mutation. `SWING_ALLOWED_ORIGINS=*` must not be used for authenticated browser access.
+
+`DIGITAL_TWIN_API_URL` is the Agent's **server-side** HTTP target. It uses `http://127.0.0.1:8001` locally and a private service hostname in a co-located container deployment. The three `SWING_PUBLIC_*` bases are **browser-visible** routes; use same-origin HTTPS/WSS on a hosted site, never a container hostname, loopback, or a secret. The two bind hosts and ports control listeners, not public URLs.
+
+`SWING_DATA_DIR`, `SWING_MODEL_DIR`, `SWING_FAISS_DIR`, and `SWING_EVENT_DB_PATH` name filesystem paths. Relative values resolve from the repository root. Mount curated inputs and models read-only in a container; put the SQLite event database on a persistent writable volume. Separate hosts cannot safely share the source's SQLite-by-path design without a deliberate store redesign.
+
+`SWING_STARTUP_DERATE` and `SWING_STARTUP_LOAD_MULT` retain the supplied IEEE 118 simulation defaults. `SWING_CONTINGENCY_INTERVAL_SECONDS` and `SWING_PROPOSAL_TTL_SECONDS` must be positive integers. `SWING_RAG_TRUST_MODE=rebuild` prefers generating a new index from the reviewed PDF; `verified_index` is only for an integrity-checked supplied index in a controlled environment. `SWING_LOG_LEVEL` sets server logging and must not expose credentials or private user text.
+
+`GOOGLE_API_KEY` is optional for the offline simulator but required for real Gemini calls. Select `SWING_GEMINI_PRIMARY_MODEL` and fallback IDs from currently supported models for the authorized account. The application must return a non-actuating error if online AI is unavailable. OIDC issuer/audience/client values, session signing secrets, and the internal Twin token become relevant only with the matching authentication mode; keep secret values in a local untracked file or secret manager.
+
+Use CPython 3.12. The supplied SAC archives report Python 3.10.20 training metadata; real inference compatibility remains a separate acceptance check after the artifacts are imported and verified. On macOS, the LightGBM wheel also needs the native OpenMP `libomp` library. The local import check used a hash-verified official Homebrew bottle in temporary storage; normal macOS setup can install `libomp` through Homebrew. Linux containers must provide their appropriate OpenMP runtime. This is a native library requirement and is not checked by `pip check`.
