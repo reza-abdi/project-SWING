@@ -5,10 +5,13 @@ langchain_community==0.4.2
 langchain_google_genai==4.3.1
 langchain_text_splitters==1.1.2
 langgraph==1.2.9
+# macOS wheel needs the native libomp runtime (verified with Homebrew's arm64 bottle).
 lightgbm==4.7.0
-numpy==2.5.1
+# pandapower 3.4.0 requires numpy>=1.26,<2.4 (source pinned 2.5.1).
+numpy==2.3.5
 pandapower==3.4.0
-pandas==3.0.3
+# pandapower 3.4.0 requires pandas~=2.3 (source pinned 3.0.3).
+pandas==2.3.3
 pydantic==2.13.4
 python-dotenv==1.2.2
 pytorch_forecasting==1.8.0
@@ -17,3 +20,9 @@ shap==0.49.1
 stable_baselines3==2.9.0
 torch==2.11.0
 uvicorn==0.51.0
+# Direct and optional runtime requirements of the supplied AI/RAG/TFT code.
+langchain-core==1.6.12
+sentence-transformers==6.1.0
+faiss-cpu==1.15.1
+pypdf==6.21.1
+lightning==2.6.6
