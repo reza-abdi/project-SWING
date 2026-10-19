@@ -1,0 +1,17 @@
+* text=auto
+*.py text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.csv -text
+models/*.txt -text
+*.png binary
+*.pdf binary
+*.zip binary
+*.ckpt binary
+*.pkl binary
+*.faiss binary
