@@ -57,7 +57,14 @@ def stop_services(processes: list[tuple[Service, subprocess.Popen]]) -> None:
             process.wait(timeout=5)
 
 
-def main() -> None:
+def check_children(processes: list[tuple[Service, subprocess.Popen]]) -> None:
+    for service, process in processes:
+        return_code = process.poll()
+        if return_code is not None:
+            raise ChildProcessError(f"{service.name} exited unexpectedly with status {return_code}")
+
+
+def main() -> int:
     load_dotenv(PROJECT_ROOT / ".env")
     processes: list[tuple[Service, subprocess.Popen]] = []
     try:
@@ -73,11 +80,16 @@ def main() -> None:
         print("Press Ctrl+C to stop all services.", flush=True)
         while True:
             time.sleep(1)
+            check_children(processes)
     except KeyboardInterrupt:
         print("Stopping local services.", flush=True)
+        return 0
+    except ChildProcessError as error:
+        print(str(error), file=sys.stderr, flush=True)
+        return 1
     finally:
         stop_services(processes)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
