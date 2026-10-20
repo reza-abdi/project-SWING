@@ -19,3 +19,22 @@ class TwinModel:
         self.baseline_load_p_mw = self.net.load["p_mw"].copy()
         self.baseline_load_q_mvar = self.net.load["q_mvar"].copy()
         self.baseline_max_i_ka = self.net.line["max_i_ka"].copy()
+
+        self.asset_registry = {
+            "transformers": {
+                index: {"fault_class": "NORMAL", "rul_days": 100.0, "dga_score": 0.0}
+                for index in self.net.trafo.index
+            },
+            "generators": {
+                index: {"fault_class": "NORMAL", "rul_days": 100.0, "vibration_amp": 0.0}
+                for index in self.net.gen.index
+            },
+            "circuit_breakers": {
+                index: {"fault_class": "NORMAL", "rul_days": 100.0, "tccs_delay_ms": 0.0}
+                for index in self.net.line.index
+            },
+            "relays": {
+                index: {"fault_class": "NORMAL", "logic_integrity": 100.0}
+                for index in self.net.bus.index
+            },
+        }
