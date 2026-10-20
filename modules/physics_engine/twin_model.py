@@ -14,3 +14,8 @@ class TwinModel:
         else:
             raise ValueError("Unsupported grid type. Choose '39' or '118'.")
         self.grid_type = grid_type
+
+        # Anchor absolute stress-test changes to the untouched IEEE case values.
+        self.baseline_load_p_mw = self.net.load["p_mw"].copy()
+        self.baseline_load_q_mvar = self.net.load["q_mvar"].copy()
+        self.baseline_max_i_ka = self.net.line["max_i_ka"].copy()
