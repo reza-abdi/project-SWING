@@ -16,7 +16,7 @@ from modules.config import runtime_settings  # noqa: E402
 def main() -> None:
     load_dotenv(ROOT / ".env")
     settings = runtime_settings()
-    uvicorn.run("modules.physics_engine.api:app", host="127.0.0.1", port=settings.twin_port)
+    uvicorn.run("modules.physics_engine.api:app", host=settings.twin_bind_host, port=settings.twin_port)
 
 
 if __name__ == "__main__":

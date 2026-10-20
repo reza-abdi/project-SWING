@@ -16,7 +16,7 @@ from modules.config import runtime_settings  # noqa: E402
 def main() -> None:
     load_dotenv(ROOT / ".env")
     settings = runtime_settings()
-    uvicorn.run("modules.ai_agents.agent_api:app", host="127.0.0.1", port=settings.agent_port)
+    uvicorn.run("modules.ai_agents.agent_api:app", host=settings.agent_bind_host, port=settings.agent_port)
 
 
 if __name__ == "__main__":

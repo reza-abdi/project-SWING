@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlsplit
@@ -54,6 +55,8 @@ class RuntimePaths:
 @dataclass(frozen=True)
 class RuntimeSettings:
     twin_api_url: str
+    twin_bind_host: str
+    agent_bind_host: str
     startup_derate: float
     startup_load_mult: float
     twin_port: int
@@ -103,12 +106,48 @@ def _http_url(name: str, default: str, environment: Mapping[str, str]) -> str:
     return value.rstrip("/")
 
 
+def _bind_host(name: str, default: str, environment: Mapping[str, str]) -> str:
+    value = environment.get(name, default)
+    try:
+        loopback = value.lower() == "localhost" or ip_address(value).is_loopback
+    except ValueError:
+        raise ValueError(f"{name} must be localhost or an IP address") from None
+    if not loopback:
+        mode = environment.get("SWING_AUTH_MODE", "disabled_local_only")
+        origins = [origin.strip() for origin in environment.get("SWING_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+        if mode not in {"oidc", "reverse_proxy"}:
+            raise ValueError(f"{name} requires configured authentication and exact allowed origins")
+        if not origins or "*" in origins:
+            raise ValueError("SWING_ALLOWED_ORIGINS must contain exact HTTPS origins")
+        for origin in origins:
+            try:
+                parsed = urlsplit(origin)
+                valid_origin = (
+                    parsed.scheme == "https"
+                    and bool(parsed.hostname)
+                    and parsed.username is None
+                    and parsed.password is None
+                    and parsed.path in {"", "/"}
+                    and not parsed.query
+                    and not parsed.fragment
+                    and not any(character.isspace() for character in origin)
+                    and (parsed.port is None or 1 <= parsed.port <= 65535)
+                )
+            except ValueError:
+                valid_origin = False
+            if not valid_origin:
+                raise ValueError("SWING_ALLOWED_ORIGINS must contain exact HTTPS origins")
+    return value
+
+
 def runtime_settings(environment: Mapping[str, str] | None = None) -> RuntimeSettings:
     """Parse source-compatible local settings without echoing untrusted values."""
     env = os.environ if environment is None else environment
     operation_mode(env)
     return RuntimeSettings(
         twin_api_url=_http_url("DIGITAL_TWIN_API_URL", "http://127.0.0.1:8001", env),
+        twin_bind_host=_bind_host("SWING_TWIN_BIND_HOST", "127.0.0.1", env),
+        agent_bind_host=_bind_host("SWING_AGENT_BIND_HOST", "127.0.0.1", env),
         startup_derate=_positive_float("SWING_STARTUP_DERATE", "0.15", env),
         startup_load_mult=_positive_float("SWING_STARTUP_LOAD_MULT", "1.4", env),
         twin_port=_positive_int("SWING_TWIN_PORT", "8001", env, maximum=65535),

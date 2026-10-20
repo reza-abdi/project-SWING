@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from modules.config import PROJECT_ROOT, resolve_project_path, runtime_paths
+from modules.config import PROJECT_ROOT, resolve_project_path, runtime_paths, runtime_settings
 
 
 def test_default_paths_use_repository_root(monkeypatch, tmp_path):
@@ -40,3 +40,34 @@ def test_bad_setting_exception_does_not_echo_environment(monkeypatch):
     assert "SWING_MODEL_DIR" in str(error.value)
     assert marker not in str(error.value)
     assert "GOOGLE_API_KEY" not in str(error.value)
+
+
+def test_service_endpoint_defaults_and_overrides():
+    defaults = runtime_settings({})
+    assert (defaults.twin_bind_host, defaults.twin_port) == ("127.0.0.1", 8001)
+    assert (defaults.agent_bind_host, defaults.agent_port) == ("127.0.0.1", 8002)
+    overrides = runtime_settings({"SWING_TWIN_PORT": "8101", "SWING_AGENT_PORT": "8102"})
+    assert (overrides.twin_port, overrides.agent_port) == (8101, 8102)
+
+
+@pytest.mark.parametrize("value", ["0", "65536", "port", " 8001"])
+def test_invalid_service_port_fails(value):
+    with pytest.raises(ValueError, match="SWING_TWIN_PORT"):
+        runtime_settings({"SWING_TWIN_PORT": value})
+
+
+def test_broad_bind_requires_auth_mode_and_exact_https_origin():
+    with pytest.raises(ValueError, match="SWING_TWIN_BIND_HOST"):
+        runtime_settings({"SWING_TWIN_BIND_HOST": "0.0.0.0"})
+    settings = runtime_settings({
+        "SWING_TWIN_BIND_HOST": "0.0.0.0",
+        "SWING_AUTH_MODE": "reverse_proxy",
+        "SWING_ALLOWED_ORIGINS": "https://swing.example.org",
+    })
+    assert settings.twin_bind_host == "0.0.0.0"
+    with pytest.raises(ValueError, match="SWING_ALLOWED_ORIGINS"):
+        runtime_settings({
+            "SWING_AGENT_BIND_HOST": "::",
+            "SWING_AUTH_MODE": "oidc",
+            "SWING_ALLOWED_ORIGINS": "*",
+        })
