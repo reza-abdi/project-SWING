@@ -1,5 +1,7 @@
 """Electrical and topology measurements for pandapower networks."""
 
+import math
+
 
 def get_topology_metrics(net) -> dict[str, int]:
     """Return element counts, including both two- and three-winding transformers."""
@@ -48,3 +50,15 @@ def get_security_metrics(net) -> dict[str, object]:
         "overloaded_line_ids": overloaded_ids,
         "collapsed": bool(collapsed),
     }
+
+
+def get_observation_vector(net) -> list[float]:
+    """Return ordered bus voltages followed by per-unit line loadings."""
+
+    def finite_or_zero(value) -> float:
+        number = float(value)
+        return number if math.isfinite(number) else 0.0
+
+    voltages = [finite_or_zero(value) for value in net.res_bus["vm_pu"]]
+    loadings = [finite_or_zero(value) / 100.0 for value in net.res_line["loading_percent"]]
+    return voltages + loadings
