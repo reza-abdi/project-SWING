@@ -70,21 +70,42 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
 
 def get_resilience_index(net) -> dict[str, float | bool]:
     """Calculate 35/40/25 voltage, thermal loading, and security scores."""
-    voltages = net.res_bus["vm_pu"].dropna()
-    if voltages.empty:
-        voltage_score = 0.0
-    else:
-        max_deviation = float((voltages - 1.0).abs().max())
-        voltage_score = _clamp(100.0 - (max_deviation / 0.10) * 100.0)
+    failed_result = {
+        "grid_resilience_index": 0.0,
+        "collapsed": True,
+        "voltage_score": 0.0,
+        "loading_score": 0.0,
+        "security_score": 0.0,
+    }
+    try:
+        bus_values = [float(value) for value in net.res_bus["vm_pu"]]
+        line_values = [float(value) for value in net.res_line["loading_percent"]]
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return failed_result.copy()
 
-    loadings = net.res_line["loading_percent"].dropna()
-    if loadings.empty:
-        loading_score = 100.0
-    else:
-        max_loading = float(loadings.max())
+    try:
+        converged = net.get("converged")
+    except AttributeError:
+        converged = getattr(net, "converged", None)
+    line_count = len(net.line)
+    invalid_measurements = (
+        not bus_values
+        or any(not math.isfinite(value) for value in bus_values)
+        or (line_count > 0 and (len(line_values) != line_count or any(not math.isfinite(value) for value in line_values)))
+    )
+    if converged is not None and not bool(converged):
+        return failed_result.copy()
+    if invalid_measurements:
+        return failed_result.copy()
+
+    voltage_score = _clamp(100.0 - (max(abs(value - 1.0) for value in bus_values) / 0.10) * 100.0)
+    if line_values:
+        max_loading = max(line_values)
         loading_score = _clamp(100.0 - max(0.0, max_loading - 80.0) * 2.0)
+    else:
+        loading_score = 100.0
 
-    overloaded_count = int((net.res_line["loading_percent"] > 100.0).sum())
+    overloaded_count = sum(value > 100.0 for value in line_values)
     security_score = _clamp(100.0 - overloaded_count * 15.0)
     index = 0.35 * voltage_score + 0.40 * loading_score + 0.25 * security_score
     return {
