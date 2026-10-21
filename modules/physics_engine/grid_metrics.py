@@ -22,3 +22,29 @@ def get_electrical_metrics(net) -> dict[str, float]:
         # Keep the original public key spelling until existing clients migrate.
         "max_volateg_pu": float(net.res_bus["vm_pu"].max()),
     }
+
+
+def get_security_metrics(net) -> dict[str, object]:
+    """Report overloaded lines and treat missing power-flow results as collapse."""
+    line_ids = list(net.line.index)
+    line_count = len(line_ids)
+    try:
+        converged = net.get("converged")
+    except AttributeError:
+        converged = getattr(net, "converged", None)
+
+    if "loading_percent" not in net.res_line:
+        loading = None
+    else:
+        loading = net.res_line["loading_percent"]
+    collapsed = converged is False or (line_count > 0 and (loading is None or loading.isna().all()))
+
+    if collapsed:
+        overloaded_ids = line_ids
+    else:
+        overloaded_ids = list(net.res_line.index[net.res_line["loading_percent"] > 100])
+    return {
+        "overloaded_line_count": len(overloaded_ids),
+        "overloaded_line_ids": overloaded_ids,
+        "collapsed": bool(collapsed),
+    }
