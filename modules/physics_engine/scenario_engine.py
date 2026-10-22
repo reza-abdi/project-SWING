@@ -1,6 +1,7 @@
 """Scenario transformations for the pandapower digital twin."""
 
 import math
+import random
 
 
 def apply_load_multiplier(net, multiplier: float):
@@ -16,3 +17,18 @@ def derate_lines(net, derate_multiplier: float):
         raise ValueError("derate_multiplier must be a finite positive number")
     net.line["max_i_ka"] = net.line["max_i_ka"] * derate_multiplier
     return net
+
+
+def simulate_transformer_aging(asset_registry, trafo_id: int, severity: float = 1.0):
+    """Increase transformer gas score and reduce useful life for one time step."""
+    if trafo_id in asset_registry["transformers"]:
+        transformer = asset_registry["transformers"][trafo_id]
+        transformer["dga_score"] += random.uniform(0.5, 2.0) * severity
+        transformer["rul_days"] -= random.uniform(1.0, 3.0) * severity
+
+        if transformer["dga_score"] > 80.0:
+            transformer["fault_class"] = "HIGH_ENERGY_ARCING"
+        elif transformer["dga_score"] > 50.0:
+            transformer["fault_class"] = "THERMAL_FAULT"
+        transformer["rul_days"] = max(0.0, transformer["rul_days"])
+    return asset_registry
