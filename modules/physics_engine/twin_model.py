@@ -3,7 +3,7 @@
 import pandapower as pp
 import pandapower.networks as networks
 
-from modules.physics_engine.scenario_engine import simulate_generator_trip
+from modules.physics_engine.scenario_engine import simulate_generator_trip, simulate_weather_event
 
 
 class TwinModel:
@@ -51,6 +51,24 @@ class TwinModel:
             self.net, self.asset_registry, gen_id, trip_type
         )
         event = f"Generator {gen_id} Tripped ({trip_type})"
+        self.current_scenario = event
+        self.event_history.append(event)
+        self.simulation_status = "RUNNING"
+        try:
+            pp.runpp(self.net, algorithm="nr")
+        except pp.LoadflowNotConverged:
+            self.simulation_status = "FAILED"
+            self.event_history.append("Simulation Failed")
+        else:
+            self.simulation_status = "COMPLETED"
+        return self.simulation_status
+
+    def apply_weather_event(self, event_type: str = "HEATWAVE", severity: float = 1.0) -> str:
+        """Apply a weather stress event, then rerun power flow and track its status."""
+        self.net, self.asset_registry = simulate_weather_event(
+            self.net, self.asset_registry, event_type, severity
+        )
+        event = f"Weather Event: {event_type} ({severity}x)"
         self.current_scenario = event
         self.event_history.append(event)
         self.simulation_status = "RUNNING"

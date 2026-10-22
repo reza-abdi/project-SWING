@@ -89,3 +89,22 @@ def simulate_generator_trip(net, asset_registry, gen_id: int, trip_type: str = "
         generator["fault_class"] = trip_type
         generator["rul_days"] = 0.0
     return net, asset_registry
+
+
+def simulate_weather_event(net, asset_registry, event_type: str = "HEATWAVE", severity: float = 1.0):
+    """Apply heatwave, storm, or cold-snap load and asset stress."""
+    if event_type == "HEATWAVE":
+        derate_factor = max(0.5, 1.0 - 0.10 * severity)
+        net = derate_lines(net, derate_factor)
+        for trafo_id in asset_registry["transformers"]:
+            simulate_transformer_aging(asset_registry, trafo_id, severity=1.5 * severity)
+    elif event_type == "STORM":
+        derate_factor = max(0.3, 1.0 - 0.25 * severity)
+        net = derate_lines(net, derate_factor)
+        for breaker_id in asset_registry["circuit_breakers"]:
+            simulate_breaker_degradation(asset_registry, breaker_id, friction_factor=2.0 * severity)
+    elif event_type == "COLD_SNAP":
+        net = apply_load_multiplier(net, multiplier=1.0 + 0.20 * severity)
+    else:
+        raise ValueError(f"Unknown weather event_type: {event_type!r}. Use HEATWAVE, STORM, or COLD_SNAP.")
+    return net, asset_registry
