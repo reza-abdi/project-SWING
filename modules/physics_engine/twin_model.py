@@ -1,6 +1,9 @@
 """Factories and state for the IEEE transmission-grid digital twin."""
 
+import pandapower as pp
 import pandapower.networks as networks
+
+from modules.physics_engine.scenario_engine import simulate_generator_trip
 
 
 class TwinModel:
@@ -38,3 +41,24 @@ class TwinModel:
                 for index in self.net.bus.index
             },
         }
+        self.simulation_status = "NOT_STARTED"
+        self.current_scenario = "Baseline"
+        self.event_history: list[str] = []
+
+    def trip_generator(self, gen_id: int, trip_type: str = "FORCED_OUTAGE") -> str:
+        """Trip a generator, update its asset record, and rerun AC power flow."""
+        self.net, self.asset_registry = simulate_generator_trip(
+            self.net, self.asset_registry, gen_id, trip_type
+        )
+        event = f"Generator {gen_id} Tripped ({trip_type})"
+        self.current_scenario = event
+        self.event_history.append(event)
+        self.simulation_status = "RUNNING"
+        try:
+            pp.runpp(self.net, algorithm="nr")
+        except pp.LoadflowNotConverged:
+            self.simulation_status = "FAILED"
+            self.event_history.append("Simulation Failed")
+        else:
+            self.simulation_status = "COMPLETED"
+        return self.simulation_status

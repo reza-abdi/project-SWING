@@ -76,3 +76,16 @@ def simulate_relay_degradation(asset_registry, relay_id: int, noise_factor: floa
             relay["fault_class"] = "MINOR_CALIBRATION_ERROR"
         relay["logic_integrity"] = max(0.0, relay["logic_integrity"])
     return asset_registry
+
+
+def simulate_generator_trip(net, asset_registry, gen_id: int, trip_type: str = "FORCED_OUTAGE"):
+    """Take a generator out of service and record its resulting asset state."""
+    if gen_id not in net.gen.index:
+        raise ValueError(f"Generator {gen_id} not found in network.")
+
+    net.gen.at[gen_id, "in_service"] = False
+    if gen_id in asset_registry["generators"]:
+        generator = asset_registry["generators"][gen_id]
+        generator["fault_class"] = trip_type
+        generator["rul_days"] = 0.0
+    return net, asset_registry
