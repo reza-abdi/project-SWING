@@ -62,3 +62,17 @@ def simulate_breaker_degradation(asset_registry, breaker_id: int, friction_facto
             breaker["fault_class"] = "SLUGGISH_OPERATION"
         breaker["rul_days"] = max(0.0, breaker["rul_days"])
     return asset_registry
+
+
+def simulate_relay_degradation(asset_registry, relay_id: int, noise_factor: float = 1.0):
+    """Reduce relay logic integrity and map it to the source fault labels."""
+    if relay_id in asset_registry["relays"]:
+        relay = asset_registry["relays"][relay_id]
+        relay["logic_integrity"] -= random.uniform(0.5, 2.0) * noise_factor
+
+        if relay["logic_integrity"] < 50.0:
+            relay["fault_class"] = "CRITICAL_LOGIC_FAILURE"
+        elif relay["logic_integrity"] < 80.0:
+            relay["fault_class"] = "MINOR_CALIBRATION_ERROR"
+        relay["logic_integrity"] = max(0.0, relay["logic_integrity"])
+    return asset_registry
