@@ -32,3 +32,18 @@ def simulate_transformer_aging(asset_registry, trafo_id: int, severity: float = 
             transformer["fault_class"] = "THERMAL_FAULT"
         transformer["rul_days"] = max(0.0, transformer["rul_days"])
     return asset_registry
+
+
+def simulate_generator_wear(asset_registry, gen_id: int, wear_rate: float = 1.0):
+    """Increase generator vibration and reduce useful life for one time step."""
+    if gen_id in asset_registry["generators"]:
+        generator = asset_registry["generators"][gen_id]
+        generator["vibration_amp"] += random.uniform(0.1, 0.5) * wear_rate
+        generator["rul_days"] -= random.uniform(0.8, 2.5) * wear_rate
+
+        if generator["vibration_amp"] > 7.5:
+            generator["fault_class"] = "CRITICAL_UNBALANCE"
+        elif generator["vibration_amp"] > 4.5:
+            generator["fault_class"] = "BEARING_WEAR"
+        generator["rul_days"] = max(0.0, generator["rul_days"])
+    return asset_registry
