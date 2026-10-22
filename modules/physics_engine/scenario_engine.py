@@ -47,3 +47,18 @@ def simulate_generator_wear(asset_registry, gen_id: int, wear_rate: float = 1.0)
             generator["fault_class"] = "BEARING_WEAR"
         generator["rul_days"] = max(0.0, generator["rul_days"])
     return asset_registry
+
+
+def simulate_breaker_degradation(asset_registry, breaker_id: int, friction_factor: float = 1.0):
+    """Increase breaker trip-coil delay and reduce its remaining useful life."""
+    if breaker_id in asset_registry["circuit_breakers"]:
+        breaker = asset_registry["circuit_breakers"][breaker_id]
+        breaker["tccs_delay_ms"] += random.uniform(1.0, 4.0) * friction_factor
+        breaker["rul_days"] -= random.uniform(0.5, 2.0) * friction_factor
+
+        if breaker["tccs_delay_ms"] > 50.0:
+            breaker["fault_class"] = "MECHANICAL_JAM"
+        elif breaker["tccs_delay_ms"] > 30.0:
+            breaker["fault_class"] = "SLUGGISH_OPERATION"
+        breaker["rul_days"] = max(0.0, breaker["rul_days"])
+    return asset_registry
