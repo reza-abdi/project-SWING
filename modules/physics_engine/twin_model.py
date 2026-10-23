@@ -1,5 +1,7 @@
 """Factories and state for the IEEE transmission-grid digital twin."""
 
+import copy
+
 import pandapower as pp
 import pandapower.networks as networks
 
@@ -55,6 +57,10 @@ class TwinModel:
         self.simulation_status = "NOT_STARTED"
         self.current_scenario = "Baseline"
         self.event_history: list[str] = []
+        self.current_state: dict[str, object] | None = None
+        self.previous_state: dict[str, object] | None = None
+        self.time_step = 0
+        self.state_history: dict[int, dict[str, object]] = {}
 
     def get_current_state(self) -> dict[str, object]:
         """Return a readable snapshot of the current network measurements."""
@@ -72,6 +78,31 @@ class TwinModel:
         summary.update(get_resilience_index(self.net))
         return summary
 
+    def update_state(
+        self,
+        simulation_summary: dict[str, object],
+        simulation_status: str,
+        event: str,
+    ) -> dict[str, object]:
+        """Advance the grid timeline and retain independent state snapshots."""
+        self.previous_state = copy.deepcopy(self.current_state)
+        self.time_step += 1
+        self.simulation_status = simulation_status
+        self.event_history.append(event)
+
+        state = copy.deepcopy(simulation_summary)
+        state.update(
+            {
+                "simulation_status": simulation_status,
+                "last_event": event,
+                "time_step": self.time_step,
+                "event_history": copy.deepcopy(self.event_history),
+            }
+        )
+        self.current_state = state
+        self.state_history[self.time_step] = copy.deepcopy(state)
+        return self.current_state
+
     def run_baseline_simulation(self) -> dict[str, object]:
         """Run Newton-Raphson power flow and return a state or failure snapshot."""
         self.simulation_status = "RUNNING"
@@ -79,24 +110,18 @@ class TwinModel:
         try:
             pp.runpp(self.net, algorithm="nr")
         except pp.LoadflowNotConverged:
-            self.simulation_status = "FAILED"
             event = "Baseline Simulation Failed"
-            self.event_history.append(event)
-            return {
+            summary: dict[str, object] = {
                 "grid_type": self.grid_type,
-                "simulation_status": self.simulation_status,
                 "current_scenario": self.current_scenario,
-                "last_event": event,
                 "grid_resilience_index": 0.0,
                 "collapsed": True,
             }
+            return self.update_state(summary, "FAILED", event)
 
-        self.simulation_status = "COMPLETED"
         event = "Baseline Simulation Completed"
-        self.event_history.append(event)
         summary = self.get_current_state()
-        summary["last_event"] = event
-        return summary
+        return self.update_state(summary, "COMPLETED", event)
 
     def trip_generator(self, gen_id: int, trip_type: str = "FORCED_OUTAGE") -> str:
         """Trip a generator, update its asset record, and rerun AC power flow."""
@@ -105,15 +130,13 @@ class TwinModel:
         )
         event = f"Generator {gen_id} Tripped ({trip_type})"
         self.current_scenario = event
-        self.event_history.append(event)
         self.simulation_status = "RUNNING"
         try:
             pp.runpp(self.net, algorithm="nr")
         except pp.LoadflowNotConverged:
-            self.simulation_status = "FAILED"
-            self.event_history.append("Simulation Failed")
+            self.update_state(self.get_current_state(), "FAILED", event)
         else:
-            self.simulation_status = "COMPLETED"
+            self.update_state(self.get_current_state(), "COMPLETED", event)
         return self.simulation_status
 
     def apply_weather_event(self, event_type: str = "HEATWAVE", severity: float = 1.0) -> str:
@@ -123,15 +146,13 @@ class TwinModel:
         )
         event = f"Weather Event: {event_type} ({severity}x)"
         self.current_scenario = event
-        self.event_history.append(event)
         self.simulation_status = "RUNNING"
         try:
             pp.runpp(self.net, algorithm="nr")
         except pp.LoadflowNotConverged:
-            self.simulation_status = "FAILED"
-            self.event_history.append("Simulation Failed")
+            self.update_state(self.get_current_state(), "FAILED", event)
         else:
-            self.simulation_status = "COMPLETED"
+            self.update_state(self.get_current_state(), "COMPLETED", event)
         return self.simulation_status
 
     def ramp_renewables(self, ramp_percent: float, renewable_gen_ids: list[int] | None = None) -> str:
@@ -139,13 +160,11 @@ class TwinModel:
         self.net = ramp_down_renewables(self.net, ramp_percent, renewable_gen_ids)
         event = f"Renewables ramped down by {float(ramp_percent):g}%"
         self.current_scenario = event
-        self.event_history.append(event)
         self.simulation_status = "RUNNING"
         try:
             pp.runpp(self.net, algorithm="nr")
         except pp.LoadflowNotConverged:
-            self.simulation_status = "FAILED"
-            self.event_history.append("Simulation Failed")
+            self.update_state(self.get_current_state(), "FAILED", event)
         else:
-            self.simulation_status = "COMPLETED"
+            self.update_state(self.get_current_state(), "COMPLETED", event)
         return self.simulation_status
