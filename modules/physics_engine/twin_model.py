@@ -3,7 +3,11 @@
 import pandapower as pp
 import pandapower.networks as networks
 
-from modules.physics_engine.scenario_engine import simulate_generator_trip, simulate_weather_event
+from modules.physics_engine.scenario_engine import (
+    ramp_down_renewables,
+    simulate_generator_trip,
+    simulate_weather_event,
+)
 
 
 class TwinModel:
@@ -69,6 +73,22 @@ class TwinModel:
             self.net, self.asset_registry, event_type, severity
         )
         event = f"Weather Event: {event_type} ({severity}x)"
+        self.current_scenario = event
+        self.event_history.append(event)
+        self.simulation_status = "RUNNING"
+        try:
+            pp.runpp(self.net, algorithm="nr")
+        except pp.LoadflowNotConverged:
+            self.simulation_status = "FAILED"
+            self.event_history.append("Simulation Failed")
+        else:
+            self.simulation_status = "COMPLETED"
+        return self.simulation_status
+
+    def ramp_renewables(self, ramp_percent: float, renewable_gen_ids: list[int] | None = None) -> str:
+        """Curtail selected generator output and rerun power flow."""
+        self.net = ramp_down_renewables(self.net, ramp_percent, renewable_gen_ids)
+        event = f"Renewables ramped down by {float(ramp_percent):g}%"
         self.current_scenario = event
         self.event_history.append(event)
         self.simulation_status = "RUNNING"

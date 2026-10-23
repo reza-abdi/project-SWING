@@ -108,3 +108,22 @@ def simulate_weather_event(net, asset_registry, event_type: str = "HEATWAVE", se
     else:
         raise ValueError(f"Unknown weather event_type: {event_type!r}. Use HEATWAVE, STORM, or COLD_SNAP.")
     return net, asset_registry
+
+
+def ramp_down_renewables(net, ramp_percent: float, renewable_gen_ids: list[int] | None = None):
+    """Curtail selected generator outputs by a validated percentage."""
+    try:
+        percent = float(ramp_percent)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ramp_percent must be between 0 and 100") from exc
+    if not math.isfinite(percent) or not 0.0 <= percent <= 100.0:
+        raise ValueError("ramp_percent must be between 0 and 100")
+
+    target_ids = list(net.gen.index) if renewable_gen_ids is None else list(renewable_gen_ids)
+    target_ids = list(dict.fromkeys(target_ids))
+    invalid_ids = [generator_id for generator_id in target_ids if generator_id not in net.gen.index]
+    if invalid_ids:
+        raise ValueError(f"Unknown generator indices: {invalid_ids}")
+
+    net.gen.loc[target_ids, "p_mw"] = net.gen.loc[target_ids, "p_mw"] * (1.0 - percent / 100.0)
+    return net
