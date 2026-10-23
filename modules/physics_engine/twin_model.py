@@ -8,6 +8,13 @@ from modules.physics_engine.scenario_engine import (
     simulate_generator_trip,
     simulate_weather_event,
 )
+from modules.physics_engine.grid_metrics import (
+    get_electrical_metrics,
+    get_observation_vector,
+    get_resilience_index,
+    get_security_metrics,
+    get_topology_metrics,
+)
 
 
 class TwinModel:
@@ -48,6 +55,48 @@ class TwinModel:
         self.simulation_status = "NOT_STARTED"
         self.current_scenario = "Baseline"
         self.event_history: list[str] = []
+
+    def get_current_state(self) -> dict[str, object]:
+        """Return a readable snapshot of the current network measurements."""
+        summary: dict[str, object] = {
+            "grid_type": self.grid_type,
+            "simulation_status": self.simulation_status,
+            "current_scenario": self.current_scenario,
+            "last_event": self.event_history[-1] if self.event_history else "None",
+            "asset_health": self.asset_registry,
+            "ai_observation": get_observation_vector(self.net),
+        }
+        summary.update(get_topology_metrics(self.net))
+        summary.update(get_electrical_metrics(self.net))
+        summary.update(get_security_metrics(self.net))
+        summary.update(get_resilience_index(self.net))
+        return summary
+
+    def run_baseline_simulation(self) -> dict[str, object]:
+        """Run Newton-Raphson power flow and return a state or failure snapshot."""
+        self.simulation_status = "RUNNING"
+        self.event_history.append("Baseline Simulation Started")
+        try:
+            pp.runpp(self.net, algorithm="nr")
+        except pp.LoadflowNotConverged:
+            self.simulation_status = "FAILED"
+            event = "Baseline Simulation Failed"
+            self.event_history.append(event)
+            return {
+                "grid_type": self.grid_type,
+                "simulation_status": self.simulation_status,
+                "current_scenario": self.current_scenario,
+                "last_event": event,
+                "grid_resilience_index": 0.0,
+                "collapsed": True,
+            }
+
+        self.simulation_status = "COMPLETED"
+        event = "Baseline Simulation Completed"
+        self.event_history.append(event)
+        summary = self.get_current_state()
+        summary["last_event"] = event
+        return summary
 
     def trip_generator(self, gen_id: int, trip_type: str = "FORCED_OUTAGE") -> str:
         """Trip a generator, update its asset record, and rerun AC power flow."""
