@@ -668,3 +668,51 @@ def update_grid_load(
         "status": "Command Received",
         "action": f"Updated Facility {bus_id} to {new_mw}MW",
     }
+
+
+@app.post("/inject_fault/{line_id}", tags=["actuation"])
+def trigger_line_fault(line_id: int, grid: str = "39") -> dict[str, str]:
+    """Trip one line atomically on the selected IEEE simulation."""
+    try:
+        grid_id = validate_grid_id(grid)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Grid not found") from exc
+    if grid_id not in grids:
+        raise HTTPException(status_code=503, detail="Grid simulator is unavailable")
+
+    twin = grids[grid_id]
+    try:
+        status = twin.trip_line(line_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Line not found") from exc
+    if status != "COMPLETED":
+        raise HTTPException(status_code=422, detail="Line outage did not converge; live grid was preserved")
+    log_event("digital_twin", grid_id, "FAULT_INJECTED", {"line_id": line_id})
+    return {
+        "status": "Command Received",
+        "action": f"Tripped Line {line_id} on IEEE {grid_id}",
+    }
+
+
+@app.post("/restore_line/{grid}/{line_id}", tags=["actuation"])
+def restore_line(grid: str, line_id: int) -> dict[str, str]:
+    """Restore one line atomically on the requested IEEE simulation."""
+    try:
+        grid_id = validate_grid_id(grid)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Grid not found") from exc
+    if grid_id not in grids:
+        raise HTTPException(status_code=503, detail="Grid simulator is unavailable")
+
+    twin = grids[grid_id]
+    try:
+        status = twin.restore_line(line_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Line not found") from exc
+    if status != "COMPLETED":
+        raise HTTPException(status_code=422, detail="Line restoration did not converge; live grid was preserved")
+    log_event("digital_twin", grid_id, "LINE_RESTORED", {"line_id": line_id})
+    return {
+        "status": "Command Received",
+        "action": f"Restored Line {line_id} on IEEE {grid_id}",
+    }
