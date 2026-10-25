@@ -245,3 +245,32 @@ class TwinModel:
         else:
             self.update_state(self.get_current_state(), "COMPLETED", event)
         return self.simulation_status
+
+    def apply_stress_test(self, load_multiplier: float, derate_multiplier: float) -> str:
+        """Set load and line ratings relative to the original IEEE case values."""
+        try:
+            load_factor = float(load_multiplier)
+            line_factor = float(derate_multiplier)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("stress multipliers must be finite numeric values") from exc
+        if not math.isfinite(load_factor) or load_factor < 0.0:
+            raise ValueError("load_multiplier must be finite and nonnegative")
+        if not math.isfinite(line_factor) or line_factor <= 0.0:
+            raise ValueError("derate_multiplier must be finite and positive")
+
+        self.net.load["p_mw"] = self.baseline_load_p_mw * load_factor
+        self.net.load["q_mvar"] = self.baseline_load_q_mvar * load_factor
+        self.net.line["max_i_ka"] = self.baseline_max_i_ka * line_factor
+        event = (
+            f"Stress Test (Load {load_factor * 100:.0f}%, "
+            f"Line Capacity {line_factor * 100:.0f}%)"
+        )
+        self.current_scenario = event
+        self.simulation_status = "RUNNING"
+        try:
+            pp.runpp(self.net, algorithm="nr")
+        except pp.LoadflowNotConverged:
+            self.update_state(self.get_current_state(), "FAILED", event)
+        else:
+            self.update_state(self.get_current_state(), "COMPLETED", event)
+        return self.simulation_status
