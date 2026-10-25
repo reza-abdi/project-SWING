@@ -49,6 +49,29 @@ class ActionRequest(BaseModel):
         return self
 
 
+class OptimizeRequest(BaseModel):
+    """Bounded optimizer search request; it never authorizes an actuation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action_type: ActionType
+    target_bus: int = Field(ge=0, strict=True)
+    secondary_bus: int | None = Field(default=None, ge=0, strict=True)
+    search_ceiling_mw: float = Field(default=300.0, gt=0.0, le=10000.0, allow_inf_nan=False)
+    tolerance_mw: float = Field(default=0.5, gt=0.0, le=1000.0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_bus_pair(self) -> "OptimizeRequest":
+        if self.action_type == "LOAD_REDISTRIBUTION":
+            if self.secondary_bus is None:
+                raise ValueError("secondary_bus is required for LOAD_REDISTRIBUTION")
+            if self.secondary_bus == self.target_bus:
+                raise ValueError("redistribution buses must be distinct")
+        elif self.secondary_bus is not None:
+            raise ValueError("secondary_bus is only valid for LOAD_REDISTRIBUTION")
+        return self
+
+
 def validate_grid_id(grid_id: str) -> GridId:
     """Restrict API grid selection to the two supported IEEE network IDs."""
     if grid_id not in {"39", "118"}:
