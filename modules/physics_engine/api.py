@@ -194,6 +194,68 @@ def _emergency_grid_rescue(base_net) -> tuple[bool, float, float | None]:
     return False, 0.0, None
 
 
+def _bisect_action(
+    base_net,
+    request: OptimizeRequest,
+    *,
+    max_loading_limit: float = 100.0,
+    max_iterations: int = 48,
+) -> dict[str, object]:
+    """Find minimum feasible MW by bounded bisection over copied grid solves."""
+    arguments = (
+        base_net,
+        request.action_type,
+        request.target_bus,
+    )
+    secondary_bus = request.secondary_bus
+    low = 0.0
+    low_converged, low_loading = _test_action(
+        *arguments, low, secondary_bus
+    )
+    if low_converged is None:
+        return {"feasible": False, "mw_amount": None, "error": "Invalid action target."}
+    if low_converged and low_loading is not None and low_loading <= max_loading_limit:
+        return {
+            "feasible": True,
+            "mw_amount": 0.0,
+            "resulting_max_loading_percent": round(low_loading, 2),
+            "method": "BISECTION",
+            "iterations": 0,
+        }
+
+    high = float(request.search_ceiling_mw)
+    high_converged, high_loading = _test_action(
+        *arguments, high, secondary_bus
+    )
+    if high_converged is None:
+        return {"feasible": False, "mw_amount": None, "error": "Invalid action target."}
+    if not high_converged or high_loading is None or high_loading > max_loading_limit:
+        return {
+            "feasible": False,
+            "mw_amount": None,
+            "resulting_max_loading_percent": high_loading,
+            "error": "Search ceiling cannot satisfy the loading limit.",
+        }
+
+    iterations = 0
+    while high - low > request.tolerance_mw and iterations < max_iterations:
+        midpoint = (low + high) / 2.0
+        converged, loading = _test_action(*arguments, midpoint, secondary_bus)
+        iterations += 1
+        if converged and loading is not None and loading <= max_loading_limit:
+            high, high_loading = midpoint, loading
+        else:
+            low = midpoint
+
+    return {
+        "feasible": True,
+        "mw_amount": round(high, 4),
+        "resulting_max_loading_percent": round(high_loading, 2),
+        "method": "BISECTION",
+        "iterations": iterations,
+    }
+
+
 @app.post("/validate_action/{grid}", tags=["optimization"])
 def validate_action(grid: str, action: ActionRequest) -> dict[str, object]:
     """Assess an action on a copy and report security and resilience changes."""
