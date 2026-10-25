@@ -20,6 +20,11 @@ from modules.physics_engine.grid_metrics import get_resilience_index, get_securi
 grids: dict[str, TwinModel] = {}
 GridId = Literal["39", "118"]
 ActionType = Literal["SHED_LOAD", "REDISPATCH_GEN", "LOAD_REDISTRIBUTION"]
+app = FastAPI(
+    title="Digital Twin API",
+    description="Physics-only simulation API for IEEE transmission grid models.",
+    version="1.0.0",
+)
 
 
 class ActionRequest(BaseModel):
@@ -106,6 +111,29 @@ def _apply_action(
     return False
 
 
+def _evaluate_action(
+    base_net,
+    action_type: str,
+    target_bus: int,
+    mw_amount: float,
+    secondary_bus: int | None = None,
+) -> tuple[bool | None, float | None, object | None]:
+    """Return outcome, loading and candidate network from isolated physics."""
+    test_net = copy.deepcopy(base_net)
+    if not _apply_action(test_net, action_type, target_bus, mw_amount, secondary_bus):
+        return None, None, None
+    try:
+        pp.runpp(test_net, algorithm="nr")
+    except pp.LoadflowNotConverged:
+        return False, None, None
+    if test_net.res_line.empty:
+        return True, 0.0, test_net
+    max_loading = float(test_net.res_line["loading_percent"].max())
+    if not math.isfinite(max_loading):
+        return False, None, None
+    return True, max_loading, test_net
+
+
 def _test_action(
     base_net,
     action_type: str,
@@ -114,19 +142,60 @@ def _test_action(
     secondary_bus: int | None = None,
 ) -> tuple[bool | None, float | None]:
     """Solve a corrective action on a deep copy without changing live state."""
-    test_net = copy.deepcopy(base_net)
-    if not _apply_action(test_net, action_type, target_bus, mw_amount, secondary_bus):
-        return None, None
+    converged, max_loading, _ = _evaluate_action(
+        base_net, action_type, target_bus, mw_amount, secondary_bus
+    )
+    return converged, max_loading
+
+
+@app.post("/validate_action/{grid}", tags=["optimization"])
+def validate_action(grid: str, action: ActionRequest) -> dict[str, object]:
+    """Assess an action on a copy and report security and resilience changes."""
     try:
-        pp.runpp(test_net, algorithm="nr")
-    except pp.LoadflowNotConverged:
-        return False, None
-    if test_net.res_line.empty:
-        return True, 0.0
-    max_loading = float(test_net.res_line["loading_percent"].max())
-    if not math.isfinite(max_loading):
-        return False, None
-    return True, max_loading
+        grid_id = validate_grid_id(grid)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Grid not found") from exc
+    if grid_id not in grids:
+        raise HTTPException(status_code=503, detail="Grid simulator is unavailable")
+
+    base_net = grids[grid_id].net
+    gri_before = float(get_resilience_index(base_net)["grid_resilience_index"])
+    converged, max_loading, candidate = _evaluate_action(
+        base_net,
+        action.action_type,
+        action.target_bus,
+        action.mw_amount,
+        action.secondary_bus,
+    )
+    if converged is None:
+        return {
+            "valid": False,
+            "resulting_max_loading_percent": None,
+            "gri_before": gri_before,
+            "gri_after": None,
+            "gri_improvement": None,
+            "error": "Action target does not have a compatible load or generator facility.",
+        }
+    if not converged or candidate is None or max_loading is None:
+        return {
+            "valid": False,
+            "resulting_max_loading_percent": None,
+            "gri_before": gri_before,
+            "gri_after": None,
+            "gri_improvement": None,
+            "error": "Power flow did not converge for this action.",
+        }
+
+    gri_after = float(get_resilience_index(candidate)["grid_resilience_index"])
+    secure = max_loading <= 100.2
+    return {
+        "valid": secure,
+        "resulting_max_loading_percent": round(max_loading, 2),
+        "gri_before": gri_before,
+        "gri_after": gri_after,
+        "gri_improvement": round(gri_after - gri_before, 2),
+        "error": None if secure else f"Max line loading {max_loading:.1f}% -- still overloaded.",
+    }
 
 
 def initialize_grids(settings=None) -> dict[str, TwinModel]:
@@ -161,12 +230,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         grids.clear()
 
 
-app = FastAPI(
-    title="Digital Twin API",
-    description="Physics-only simulation API for IEEE transmission grid models.",
-    version="1.0.0",
-    lifespan=lifespan,
-)
+app.router.lifespan_context = lifespan
 
 
 @app.get("/", tags=["service"])
