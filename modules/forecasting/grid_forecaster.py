@@ -71,3 +71,40 @@ class GridForecaster:
         result["load_lag_2"] = result["normalized_target"].shift(2)
         result["load_lag_24"] = result["normalized_target"].shift(24)
         return result.dropna(subset=["normalized_target", "load_lag_1", "load_lag_2", "load_lag_24"])
+
+    def train_quantile_models(
+        self,
+        frame: pd.DataFrame,
+        models_dir: str | Path | None = None,
+        *,
+        n_estimators: int = 300,
+    ) -> tuple[pd.DataFrame, pd.Series]:
+        """Fit q10/q50/q90 LightGBM models on an ordered 80/20 split."""
+        missing = set((*self.FEATURE_COLUMNS, "normalized_target")) - set(frame.columns)
+        if missing:
+            raise ValueError(f"training frame is missing columns: {sorted(missing)}")
+        split = int(len(frame) * 0.8)
+        if split < 2 or split >= len(frame):
+            raise ValueError("training frame needs at least three rows for an 80/20 split")
+        import lightgbm as lgb
+
+        destination = Path(models_dir) if models_dir is not None else runtime_paths().models
+        destination.mkdir(parents=True, exist_ok=True)
+        features = frame.loc[:, list(self.FEATURE_COLUMNS)]
+        target = frame["normalized_target"]
+        self.models = {}
+        for quantile in (0.10, 0.50, 0.90):
+            model = lgb.LGBMRegressor(
+                objective="quantile",
+                alpha=quantile,
+                n_estimators=n_estimators,
+                learning_rate=0.05,
+                num_leaves=31,
+                max_depth=6,
+                random_state=42,
+                verbosity=-1,
+            )
+            model.fit(features.iloc[:split], target.iloc[:split])
+            self.models[quantile] = model
+            model.booster_.save_model(str(destination / f"lightgbm_q_{int(quantile * 100)}.txt"))
+        return features.iloc[split:], target.iloc[split:]
