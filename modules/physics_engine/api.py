@@ -256,6 +256,101 @@ def _bisect_action(
     }
 
 
+def _physical_action_ceiling(
+    net,
+    action_type: str,
+    target_bus: int,
+) -> float:
+    """Calculate an action's real available MW at the selected facility."""
+    if action_type in {"SHED_LOAD", "LOAD_REDISTRIBUTION"}:
+        total = net.load.loc[net.load["bus"] == target_bus, "p_mw"].sum()
+        return max(0.0, float(total))
+    generators = net.gen.loc[
+        (net.gen["bus"] == target_bus) & net.gen["in_service"]
+    ]
+    if generators.empty:
+        return 0.0
+    headroom = (generators["max_p_mw"] - generators["p_mw"]).clip(lower=0.0)
+    total_headroom = float(headroom.sum())
+    return total_headroom if math.isfinite(total_headroom) else 0.0
+
+
+def _smart_order_router(base_net, request: OptimizeRequest) -> dict[str, object]:
+    """Try the requested action, then route it across bounded physical candidates."""
+    initial = _bisect_action(base_net, request)
+    if initial.get("feasible"):
+        return {
+            **initial,
+            "action_type": request.action_type,
+            "target_bus": request.target_bus,
+            "secondary_bus": request.secondary_bus,
+        }
+
+    loads_by_bus = base_net.load.groupby("bus")["p_mw"].sum().sort_values(ascending=False)
+    heavy_buses = [int(bus) for bus in loads_by_bus.index[:10]]
+    light_buses = [int(bus) for bus in loads_by_bus.sort_values().index]
+    action_types = [request.action_type]
+    if request.action_type == "LOAD_REDISTRIBUTION":
+        action_types.append("SHED_LOAD")
+
+    last_failure: dict[str, object] = initial
+    for action_type in action_types:
+        if action_type == "REDISPATCH_GEN":
+            candidates = [
+                int(bus)
+                for bus in base_net.gen.loc[base_net.gen["in_service"], "bus"].unique()
+            ]
+        else:
+            candidates = heavy_buses
+        for target_bus in candidates:
+            if action_type == request.action_type and target_bus == request.target_bus:
+                if action_type != "LOAD_REDISTRIBUTION" or (
+                    request.secondary_bus in set(int(bus) for bus in loads_by_bus.index)
+                    and request.secondary_bus != target_bus
+                ):
+                    continue
+            secondary_bus = None
+            if action_type == "LOAD_REDISTRIBUTION":
+                valid_destinations = set(int(bus) for bus in loads_by_bus.index)
+                if request.secondary_bus in valid_destinations and request.secondary_bus != target_bus:
+                    secondary_bus = request.secondary_bus
+                else:
+                    secondary_bus = next(
+                        (bus for bus in light_buses if bus != target_bus), None
+                    )
+                if secondary_bus is None:
+                    continue
+
+            physical_ceiling = _physical_action_ceiling(base_net, action_type, target_bus)
+            ceiling = min(request.search_ceiling_mw, physical_ceiling)
+            if ceiling <= 0.0:
+                continue
+            candidate_request = OptimizeRequest(
+                action_type=action_type,
+                target_bus=target_bus,
+                secondary_bus=secondary_bus,
+                search_ceiling_mw=ceiling,
+                tolerance_mw=request.tolerance_mw,
+            )
+            result = _bisect_action(base_net, candidate_request)
+            if result.get("feasible"):
+                return {
+                    **result,
+                    "action_type": action_type,
+                    "target_bus": target_bus,
+                    "secondary_bus": secondary_bus,
+                }
+            last_failure = result
+
+    return {
+        **last_failure,
+        "feasible": False,
+        "action_type": request.action_type,
+        "target_bus": request.target_bus,
+        "secondary_bus": request.secondary_bus,
+    }
+
+
 @app.post("/validate_action/{grid}", tags=["optimization"])
 def validate_action(grid: str, action: ActionRequest) -> dict[str, object]:
     """Assess an action on a copy and report security and resilience changes."""
