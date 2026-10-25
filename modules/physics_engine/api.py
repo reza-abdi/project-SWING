@@ -2,6 +2,7 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import math
 from typing import AsyncIterator, Literal
 
 from fastapi import FastAPI
@@ -46,6 +47,61 @@ def validate_grid_id(grid_id: str) -> GridId:
     if grid_id not in {"39", "118"}:
         raise ValueError("grid must be '39' or '118'")
     return grid_id  # type: ignore[return-value]
+
+
+def _apply_action(
+    test_net,
+    action_type: str,
+    target_bus: int,
+    mw_amount: float,
+    secondary_bus: int | None = None,
+) -> bool:
+    """Apply one bounded corrective action to an isolated candidate network."""
+    try:
+        amount = float(mw_amount)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if not math.isfinite(amount) or amount < 0.0:
+        return False
+
+    if action_type == "SHED_LOAD":
+        matching = test_net.load.index[test_net.load["bus"] == target_bus]
+        if matching.empty:
+            return False
+        load_id = matching[0]
+        current_mw = float(test_net.load.at[load_id, "p_mw"])
+        test_net.load.at[load_id, "p_mw"] = max(0.0, current_mw - amount)
+        return True
+
+    if action_type == "REDISPATCH_GEN":
+        matching = test_net.gen.index[
+            (test_net.gen["bus"] == target_bus) & test_net.gen["in_service"]
+        ]
+        if matching.empty:
+            return False
+        gen_id = matching[0]
+        current_mw = float(test_net.gen.at[gen_id, "p_mw"])
+        maximum_mw = float(test_net.gen.at[gen_id, "max_p_mw"])
+        if not math.isfinite(maximum_mw) or current_mw + amount > maximum_mw:
+            return False
+        test_net.gen.at[gen_id, "p_mw"] = current_mw + amount
+        return True
+
+    if action_type == "LOAD_REDISTRIBUTION":
+        if secondary_bus is None or secondary_bus == target_bus:
+            return False
+        source_matches = test_net.load.index[test_net.load["bus"] == target_bus]
+        destination_matches = test_net.load.index[test_net.load["bus"] == secondary_bus]
+        if source_matches.empty or destination_matches.empty:
+            return False
+        source_id, destination_id = source_matches[0], destination_matches[0]
+        source_mw = float(test_net.load.at[source_id, "p_mw"])
+        shifted_mw = min(amount, source_mw)
+        test_net.load.at[source_id, "p_mw"] = source_mw - shifted_mw
+        test_net.load.at[destination_id, "p_mw"] += shifted_mw
+        return True
+
+    return False
 
 
 def initialize_grids(settings=None) -> dict[str, TwinModel]:
