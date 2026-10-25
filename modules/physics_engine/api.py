@@ -716,3 +716,49 @@ def restore_line(grid: str, line_id: int) -> dict[str, str]:
         "status": "Command Received",
         "action": f"Restored Line {line_id} on IEEE {grid_id}",
     }
+
+
+@app.post("/redispatch_gen/{bus_id}", tags=["actuation"])
+def redispatch_generator(
+    bus_id: int,
+    delta_mw: float = Query(allow_inf_nan=False),
+    grid: str = "39",
+) -> dict[str, str]:
+    """Apply a bounded signed generator delta and commit only on convergence."""
+    try:
+        grid_id = validate_grid_id(grid)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Grid not found") from exc
+    if grid_id not in grids:
+        raise HTTPException(status_code=503, detail="Grid simulator is unavailable")
+
+    twin = grids[grid_id]
+    matching = twin.net.gen.index[
+        (twin.net.gen["bus"] == bus_id) & twin.net.gen["in_service"]
+    ]
+    if matching.empty:
+        raise HTTPException(status_code=404, detail="No in-service generator at bus")
+    gen_id = matching[0]
+    current_mw = float(twin.net.gen.at[gen_id, "p_mw"])
+    minimum_mw = float(twin.net.gen.at[gen_id, "min_p_mw"])
+    maximum_mw = float(twin.net.gen.at[gen_id, "max_p_mw"])
+    requested_mw = current_mw + delta_mw
+    if not all(math.isfinite(value) for value in (current_mw, minimum_mw, maximum_mw, requested_mw)):
+        raise HTTPException(status_code=422, detail="Generator dispatch values must be finite")
+    if requested_mw < minimum_mw or requested_mw > maximum_mw:
+        raise HTTPException(status_code=422, detail="Generator dispatch exceeds physical limits")
+
+    candidate_net = copy.deepcopy(twin.net)
+    candidate_net.gen.at[gen_id, "p_mw"] = requested_mw
+    event = f"Generator at Bus {bus_id} Redispatched by {delta_mw:g} MW"
+    twin.current_scenario = event
+    status = twin._solve_candidate(candidate_net, event)
+    if status != "COMPLETED":
+        raise HTTPException(status_code=422, detail="Redispatch did not converge; live grid was preserved")
+    log_event(
+        "digital_twin",
+        grid_id,
+        "GENERATOR_REDISPATCH",
+        {"bus_id": bus_id, "delta_mw": delta_mw},
+    )
+    return {"status": "Command Received", "action": event}
