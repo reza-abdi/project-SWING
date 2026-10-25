@@ -21,6 +21,10 @@ class RLOptimizer:
         self.models_dir = Path(models_dir) if models_dir is not None else runtime_paths().models
         self.model = None
         self.action_type: str | None = None
+        from pandapower import networks
+
+        net = networks.case39() if grid_type == "39" else networks.case118()
+        self.expected_observation_size = len(net.line) + len(net.bus) + 1
 
     def model_path(self, action_type: str) -> Path:
         if action_type not in self.ACTION_TYPES:
@@ -45,15 +49,14 @@ class RLOptimizer:
         if self.model is None:
             raise RuntimeError("No trained RL policy is loaded")
         vector = np.asarray(observation, dtype=np.float32)
-        if vector.ndim != 1 or not np.all(np.isfinite(vector)):
-            raise ValueError("observation must be a finite one-dimensional vector")
+        if vector.ndim != 1 or vector.size != self.expected_observation_size or not np.all(np.isfinite(vector)):
+            raise ValueError(f"observation must be a finite vector of length {self.expected_observation_size}")
         action, _ = self.model.predict(vector, deterministic=True)
         values = np.asarray(action, dtype=np.float64).reshape(-1)
-        if values.size != 1 or not np.isfinite(values[0]):
+        if values.size != 1 or np.isnan(values[0]):
             raise ValueError("policy returned an invalid MW action")
-        amount = max(0.0, float(values[0]))
-        if search_ceiling_mw is not None:
-            if not np.isfinite(search_ceiling_mw) or search_ceiling_mw <= 0:
-                raise ValueError("search ceiling must be finite and positive")
-            amount = min(amount, float(search_ceiling_mw))
+        ceiling = search_ceiling_mw if search_ceiling_mw is not None else (100.0 if self.grid_type == "39" else 300.0)
+        if not np.isfinite(ceiling) or ceiling <= 0:
+            raise ValueError("search ceiling must be finite and positive")
+        amount = float(np.clip(values[0], 0.0, ceiling))
         return amount
