@@ -74,6 +74,15 @@ class OptimizeRequest(BaseModel):
         return self
 
 
+class StressTestRequest(BaseModel):
+    """Positive absolute stress multipliers for the baseline grid case."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    load_multiplier: float = Field(default=1.0, gt=0.0, le=10.0, allow_inf_nan=False)
+    derate_multiplier: float = Field(default=1.0, gt=0.0, le=10.0, allow_inf_nan=False)
+
+
 def validate_grid_id(grid_id: str) -> GridId:
     """Restrict API grid selection to the two supported IEEE network IDs."""
     if grid_id not in {"39", "118"}:
@@ -814,4 +823,39 @@ def redistribute_load(
         "status": "Command Received",
         "action": event,
         "mw_amount": shifted_mw,
+    }
+
+
+@app.post("/stress_test/{grid}", tags=["actuation"])
+def apply_stress_test(grid: str, request: StressTestRequest) -> dict[str, object]:
+    """Set absolute load and line-rating multipliers and report modeled collapse."""
+    try:
+        grid_id = validate_grid_id(grid)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Grid not found") from exc
+    if grid_id not in grids:
+        raise HTTPException(status_code=503, detail="Grid simulator is unavailable")
+
+    twin = grids[grid_id]
+    status = twin.apply_stress_test(request.load_multiplier, request.derate_multiplier)
+    log_event(
+        "digital_twin",
+        grid_id,
+        "STRESS_TEST_APPLIED",
+        {
+            "load_multiplier": request.load_multiplier,
+            "derate_multiplier": request.derate_multiplier,
+            "simulation_status": status,
+        },
+    )
+    if status != "COMPLETED":
+        raise HTTPException(
+            status_code=422,
+            detail="Grid collapsed (power flow did not converge) at this stress level.",
+        )
+    return {
+        "status": "Stress Test Applied",
+        "load_multiplier": request.load_multiplier,
+        "derate_multiplier": request.derate_multiplier,
+        "grid_resilience_index": twin.current_state.get("grid_resilience_index"),
     }
