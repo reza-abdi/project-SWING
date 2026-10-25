@@ -171,6 +171,29 @@ def _test_action(
     return converged, max_loading
 
 
+def _emergency_grid_rescue(base_net) -> tuple[bool, float, float | None]:
+    """Estimate global load shedding needed for solvability on a private copy."""
+    rescue_net = copy.deepcopy(base_net)
+    total_original_load = float(rescue_net.load["p_mw"].sum())
+    for _ in range(9):
+        rescue_net.load["p_mw"] *= 0.9
+        try:
+            pp.runpp(rescue_net, algorithm="nr")
+        except pp.LoadflowNotConverged:
+            continue
+
+        max_loading = (
+            float(rescue_net.res_line["loading_percent"].max())
+            if not rescue_net.res_line.empty
+            else 0.0
+        )
+        if not math.isfinite(max_loading):
+            continue
+        total_mw_shed = total_original_load - float(rescue_net.load["p_mw"].sum())
+        return True, total_mw_shed, max_loading
+    return False, 0.0, None
+
+
 @app.post("/validate_action/{grid}", tags=["optimization"])
 def validate_action(grid: str, action: ActionRequest) -> dict[str, object]:
     """Assess an action on a copy and report security and resilience changes."""
