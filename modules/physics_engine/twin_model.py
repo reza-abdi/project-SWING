@@ -1,6 +1,7 @@
 """Factories and state for the IEEE transmission-grid digital twin."""
 
 import copy
+import math
 
 import pandapower as pp
 import pandapower.networks as networks
@@ -206,3 +207,41 @@ class TwinModel:
     def inject_line_fault(self, line_index: int) -> str:
         """Compatibility alias for the original line fault operation."""
         return self.trip_line(line_index)
+
+    def change_load(self, bus_id: int, new_load_mw: float) -> str:
+        """Set active demand for the first load facility attached to a bus."""
+        try:
+            bus_index = int(bus_id)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("bus_id must identify a bus with a load") from exc
+        if isinstance(bus_id, bool) or (
+            isinstance(bus_id, float)
+            and (not math.isfinite(bus_id) or not bus_id.is_integer())
+        ):
+            raise ValueError("bus_id must be an integer bus index")
+        if bus_index not in self.net.bus.index:
+            raise ValueError(f"Bus {bus_id!r} not found in network.")
+
+        try:
+            load_mw = float(new_load_mw)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("new_load_mw must be finite and nonnegative") from exc
+        if not math.isfinite(load_mw) or load_mw < 0.0:
+            raise ValueError("new_load_mw must be finite and nonnegative")
+
+        matching_loads = self.net.load.index[self.net.load["bus"] == bus_index]
+        if matching_loads.empty:
+            raise ValueError(f"Bus {bus_index} does not have a load facility attached to it.")
+
+        load_id = matching_loads[0]
+        self.net.load.at[load_id, "p_mw"] = load_mw
+        event = f"Load on Bus {bus_index} Updated"
+        self.current_scenario = event
+        self.simulation_status = "RUNNING"
+        try:
+            pp.runpp(self.net, algorithm="nr")
+        except pp.LoadflowNotConverged:
+            self.update_state(self.get_current_state(), "FAILED", event)
+        else:
+            self.update_state(self.get_current_state(), "COMPLETED", event)
+        return self.simulation_status
