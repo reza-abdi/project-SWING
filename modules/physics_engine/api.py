@@ -579,15 +579,51 @@ async def contingency_scanner_loop(grid_id: str, interval_seconds: int) -> None:
         await asyncio.sleep(interval_seconds)
 
 
+@app.get("/contingency/{grid}", tags=["grid"])
+def get_contingency_status(grid: str) -> dict[str, object]:
+    """Return cached N-1 results with explicit freshness and availability."""
+    try:
+        grid_id = validate_grid_id(grid)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Grid not found") from exc
+    cached = dict(contingency_cache.get(grid_id, {}))
+    timestamp = cached.get("last_scan_timestamp")
+    if not isinstance(timestamp, (int, float)) or not math.isfinite(timestamp):
+        cached["status"] = "unavailable"
+        cached["age_seconds"] = None
+        return cached
+
+    age = max(0.0, time.time() - float(timestamp))
+    interval = runtime_settings().contingency_interval_seconds
+    cache_status = str(cached.get("status", "unavailable"))
+    if cache_status == "fresh" and age > interval * 2:
+        cache_status = "stale"
+    cached["status"] = cache_status
+    cached["age_seconds"] = round(age, 2)
+    return cached
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Validate service settings at startup and retain them for dependencies."""
     settings = runtime_settings()
     app.state.settings = settings
     initialize_grids(settings)
+    scanner_tasks = {
+        grid_id: asyncio.create_task(
+            contingency_scanner_loop(grid_id, settings.contingency_interval_seconds),
+            name=f"contingency-scanner-{grid_id}",
+        )
+        for grid_id in grids
+    }
+    app.state.contingency_scanner_tasks = scanner_tasks
     try:
         yield
     finally:
+        for task in scanner_tasks.values():
+            task.cancel()
+        await asyncio.gather(*scanner_tasks.values(), return_exceptions=True)
+        app.state.contingency_scanner_tasks = {}
         grids.clear()
 
 
