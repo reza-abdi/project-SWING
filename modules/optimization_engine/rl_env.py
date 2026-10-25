@@ -48,9 +48,30 @@ class GridOptimizeEnv(gym.Env):
         observation_size = len(net.line) + len(net.bus) + 1
         self.observation_space = spaces.Box(low=0.0, high=np.inf, shape=(observation_size,), dtype=np.float32)
         self.target_bus = int(net.bus.index[0])
+        self.reset_attempts = 10
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
-        self.net = copy.deepcopy(self.base_net)
-        self.target_bus = int(self.np_random.choice(list(self.net.bus.index)))
-        return build_observation_vector(self.net, self.target_bus), {"grid": self.grid_id}
+        load_range, derate_range = ((0.8, 1.4), (0.75, 1.0)) if self.grid_id == "39" else ((1.0, 1.6), (0.6, 1.0))
+        for attempt in range(1, self.reset_attempts + 1):
+            candidate = copy.deepcopy(self.base_net)
+            load_multiplier = float(self.np_random.uniform(*load_range))
+            derate_multiplier = float(self.np_random.uniform(*derate_range))
+            candidate.load.loc[:, "p_mw"] = self.base_net.load["p_mw"] * load_multiplier
+            candidate.load.loc[:, "q_mvar"] = self.base_net.load["q_mvar"] * load_multiplier
+            candidate.line.loc[:, "max_i_ka"] = self.base_net.line["max_i_ka"] * derate_multiplier
+            try:
+                pp.runpp(candidate)
+            except (pp.LoadflowNotConverged, ValueError, FloatingPointError):
+                continue
+            if not bool(candidate.converged):
+                continue
+            self.net = candidate
+            self.target_bus = int(self.np_random.choice(list(self.net.bus.index)))
+            return build_observation_vector(self.net, self.target_bus), {
+                "grid": self.grid_id,
+                "attempt": attempt,
+                "load_multiplier": load_multiplier,
+                "derate_multiplier": derate_multiplier,
+            }
+        raise RuntimeError(f"could not find a convergent {self.grid_id}-bus reset in {self.reset_attempts} attempts")
