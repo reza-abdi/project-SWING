@@ -1,10 +1,12 @@
 """Physics-only FastAPI service for the Project SWING digital twin."""
 
 from contextlib import asynccontextmanager
+import asyncio
 import copy
 from datetime import datetime, timezone
 from importlib import import_module
 import math
+import time
 from typing import AsyncIterator, Literal
 
 import pandapower as pp
@@ -20,6 +22,10 @@ from modules.physics_engine.grid_metrics import get_resilience_index, get_securi
 
 
 grids: dict[str, TwinModel] = {}
+contingency_cache: dict[str, dict[str, object]] = {
+    grid_id: {"status": "unavailable", "lines": {}, "generators": {}}
+    for grid_id in ("39", "118")
+}
 GridId = Literal["39", "118"]
 ActionType = Literal["SHED_LOAD", "REDISPATCH_GEN", "LOAD_REDISTRIBUTION"]
 app = FastAPI(
@@ -498,7 +504,79 @@ def initialize_grids(settings=None) -> dict[str, TwinModel]:
 
     grids.clear()
     grids.update(candidate_grids)
+    for grid_id in contingency_cache:
+        contingency_cache[grid_id] = {
+            "status": "unavailable",
+            "lines": {},
+            "generators": {},
+        }
     return grids
+
+
+def _scan_contingencies_sync(grid_id: str) -> dict[str, object]:
+    """Evaluate every line and generator outage using an isolated network copy."""
+    if grid_id not in grids:
+        return {"status": "unavailable", "lines": {}, "generators": {}}
+    base_net = grids[grid_id].net
+
+    def evaluate(candidate_net) -> dict[str, object]:
+        try:
+            pp.runpp(candidate_net, algorithm="nr")
+        except pp.LoadflowNotConverged:
+            return {"converged": False, "max_loading_percent": None, "secure": False}
+        if candidate_net.res_line.empty:
+            maximum_loading = 0.0
+        else:
+            maximum_loading = float(candidate_net.res_line["loading_percent"].max())
+        if not math.isfinite(maximum_loading):
+            return {"converged": False, "max_loading_percent": None, "secure": False}
+        return {
+            "converged": True,
+            "max_loading_percent": round(maximum_loading, 2),
+            "secure": maximum_loading <= 100.0,
+        }
+
+    line_results: dict[str, dict[str, object]] = {}
+    for line_id in base_net.line.index:
+        candidate = copy.deepcopy(base_net)
+        candidate.line.at[line_id, "in_service"] = False
+        line_results[str(int(line_id))] = evaluate(candidate)
+
+    generator_results: dict[str, dict[str, object]] = {}
+    for generator_id in base_net.gen.index:
+        candidate = copy.deepcopy(base_net)
+        candidate.gen.at[generator_id, "in_service"] = False
+        generator_results[str(int(generator_id))] = evaluate(candidate)
+
+    results = list(line_results.values()) + list(generator_results.values())
+    insecure_count = sum(not bool(result["secure"]) for result in results)
+    return {
+        "status": "fresh",
+        "lines": line_results,
+        "generators": generator_results,
+        "n_minus_1_secure": insecure_count == 0,
+        "insecure_contingency_count": insecure_count,
+        "last_scan_timestamp": time.time(),
+    }
+
+
+async def contingency_scanner_loop(grid_id: str, interval_seconds: int) -> None:
+    """Refresh one grid's contingency cache without blocking HTTP handling."""
+    if interval_seconds < 1:
+        raise ValueError("interval_seconds must be positive")
+    while True:
+        try:
+            result = await asyncio.to_thread(_scan_contingencies_sync, grid_id)
+            contingency_cache[grid_id] = result
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            contingency_cache[grid_id] = {
+                "status": "error",
+                "lines": {},
+                "generators": {},
+            }
+        await asyncio.sleep(interval_seconds)
 
 
 @asynccontextmanager
