@@ -108,3 +108,19 @@ class GridForecaster:
             self.models[quantile] = model
             model.booster_.save_model(str(destination / f"lightgbm_q_{int(quantile * 100)}.txt"))
         return features.iloc[split:], target.iloc[split:]
+
+    def load_models(self, models_dir: str | Path | None = None) -> None:
+        """Load native q10/q50/q90 boosters and verify their ordered features."""
+        import lightgbm as lgb
+
+        source = Path(models_dir) if models_dir is not None else runtime_paths().models
+        loaded = {}
+        for quantile in (0.10, 0.50, 0.90):
+            path = source / f"lightgbm_q_{int(quantile * 100)}.txt"
+            if not path.is_file():
+                raise FileNotFoundError(f"Required quantile model is missing: {path}")
+            model = lgb.Booster(model_file=str(path))
+            if model.feature_name() != list(self.FEATURE_COLUMNS):
+                raise ValueError(f"Quantile model {path.name} has incompatible feature names or order")
+            loaded[quantile] = model
+        self.models = loaded
