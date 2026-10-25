@@ -5,9 +5,11 @@ import asyncio
 import copy
 from datetime import datetime, timezone
 from importlib import import_module
+import json
 import math
 import time
 from typing import AsyncIterator, Literal
+import zipfile
 
 import pandapower as pp
 from fastapi import FastAPI
@@ -802,8 +804,27 @@ def get_rl_status() -> dict[str, dict[str, dict[str, object]]]:
             policy_path = models_dir / f"rl_optimizer_{stem}_{grid_id}.zip"
             if policy_path.is_file():
                 stat = policy_path.stat()
+                error = None
+                try:
+                    with zipfile.ZipFile(policy_path) as archive:
+                        if archive.testzip() is not None:
+                            raise ValueError("archive checksum failed")
+                        names = set(archive.namelist())
+                        if not {"data", "policy.pth", "pytorch_variables.pth"} <= names:
+                            raise ValueError("required policy members are missing")
+                        metadata = json.loads(archive.read("data"))
+                    expected_box = "gymnasium.spaces.box.Box"
+                    if any(
+                        expected_box not in metadata.get(key, {}).get(":type:", "")
+                        for key in ("observation_space", "action_space")
+                    ):
+                        raise ValueError("policy spaces are incompatible")
+                except (OSError, ValueError, zipfile.BadZipFile, json.JSONDecodeError):
+                    error = "invalid_or_incompatible_archive"
                 status[grid_id][stem] = {
-                    "trained": True,
+                    "trained": error is None,
+                    "available": error is None,
+                    "error": error,
                     "size_kb": round(stat.st_size / 1024, 1),
                     "mtime": stat.st_mtime,
                     "last_trained": datetime.fromtimestamp(
@@ -811,7 +832,7 @@ def get_rl_status() -> dict[str, dict[str, dict[str, object]]]:
                     ).isoformat(),
                 }
             else:
-                status[grid_id][stem] = {"trained": False}
+                status[grid_id][stem] = {"trained": False, "available": False, "error": "missing"}
     return status
 
 

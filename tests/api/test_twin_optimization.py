@@ -1,5 +1,9 @@
 """Regression tests for optimizer routing and numerical safety margins."""
 
+import json
+import zipfile
+from types import SimpleNamespace
+
 import modules.physics_engine.api as twin_api
 from modules.physics_engine.twin_model import TwinModel
 
@@ -80,3 +84,27 @@ def test_bisection_enforces_full_security_boundary(monkeypatch) -> None:
     assert result["feasible"] is True
     assert result["resulting_max_loading_percent"] <= 100.0
     assert 0.01 <= result["mw_amount"] <= 0.011
+
+
+def test_rl_status_distinguishes_valid_corrupt_and_missing_policy_archives(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(twin_api, "runtime_paths", lambda: SimpleNamespace(models=tmp_path))
+    valid = tmp_path / "rl_optimizer_shed_load_39.zip"
+    with zipfile.ZipFile(valid, "w") as archive:
+        archive.writestr(
+            "data",
+            json.dumps({
+                "observation_space": {":type:": "<class 'gymnasium.spaces.box.Box'>"},
+                "action_space": {":type:": "<class 'gymnasium.spaces.box.Box'>"},
+            }),
+        )
+        archive.writestr("policy.pth", b"fixture")
+        archive.writestr("pytorch_variables.pth", b"fixture")
+    (tmp_path / "rl_optimizer_redispatch_gen_39.zip").write_bytes(b"not a zip")
+
+    status = twin_api.get_rl_status()
+    assert status["39"]["shed_load"]["available"] is True
+    assert status["39"]["shed_load"]["error"] is None
+    assert status["39"]["redispatch_gen"]["trained"] is False
+    assert status["39"]["redispatch_gen"]["error"] == "invalid_or_incompatible_archive"
+    assert status["118"]["shed_load"]["error"] == "missing"
+    assert "path" not in status["39"]["shed_load"]
