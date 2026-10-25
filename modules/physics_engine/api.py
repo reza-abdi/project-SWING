@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from modules.config import runtime_settings
 from modules.physics_engine.twin_model import TwinModel
@@ -56,3 +57,24 @@ app = FastAPI(
 def read_root() -> dict[str, str]:
     """Report that the digital-twin service is online."""
     return {"message": "Digital Twin Engine is Online"}
+
+
+@app.get("/health", tags=["service"])
+def read_health() -> JSONResponse:
+    """Report service readiness and simulator dependency status without internals."""
+    grid_status = {
+        grid_id: bool(model.simulation_status == "COMPLETED" and model.net.converged)
+        for grid_id, model in grids.items()
+    }
+    ready = set(grid_status) == {"39", "118"} and all(grid_status.values())
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={
+            "status": "ok" if ready else "unavailable",
+            "service": "digital-twin",
+            "dependencies": {
+                "grid_simulators": "ok" if ready else "unavailable",
+                "grids": grid_status,
+            },
+        },
+    )
