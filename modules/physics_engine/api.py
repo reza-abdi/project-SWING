@@ -762,3 +762,56 @@ def redispatch_generator(
         {"bus_id": bus_id, "delta_mw": delta_mw},
     )
     return {"status": "Command Received", "action": event}
+
+
+@app.post("/redistribute_load/{grid}", tags=["actuation"])
+def redistribute_load(
+    grid: str,
+    source_bus: int,
+    destination_bus: int,
+    mw_amount: float = Query(gt=0.0, allow_inf_nan=False),
+) -> dict[str, str | float]:
+    """Move active load between two facilities with conserved total demand."""
+    try:
+        grid_id = validate_grid_id(grid)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Grid not found") from exc
+    if grid_id not in grids:
+        raise HTTPException(status_code=503, detail="Grid simulator is unavailable")
+    if source_bus == destination_bus:
+        raise HTTPException(status_code=422, detail="Source and destination buses must differ")
+
+    twin = grids[grid_id]
+    source_matches = twin.net.load.index[twin.net.load["bus"] == source_bus]
+    destination_matches = twin.net.load.index[twin.net.load["bus"] == destination_bus]
+    if source_matches.empty or destination_matches.empty:
+        raise HTTPException(status_code=422, detail="Both buses must have load facilities")
+
+    source_id, destination_id = source_matches[0], destination_matches[0]
+    source_mw = float(twin.net.load.at[source_id, "p_mw"])
+    shifted_mw = min(float(mw_amount), source_mw)
+    if shifted_mw <= 0.0:
+        raise HTTPException(status_code=422, detail="Source bus has no load available to move")
+    candidate_net = copy.deepcopy(twin.net)
+    candidate_net.load.at[source_id, "p_mw"] = source_mw - shifted_mw
+    candidate_net.load.at[destination_id, "p_mw"] += shifted_mw
+    event = f"Redistributed {shifted_mw:.2f} MW: Bus {source_bus} to Bus {destination_bus}"
+    twin.current_scenario = event
+    status = twin._solve_candidate(candidate_net, event)
+    if status != "COMPLETED":
+        raise HTTPException(status_code=422, detail="Redistribution did not converge; live grid was preserved")
+    log_event(
+        "digital_twin",
+        grid_id,
+        "LOAD_REDISTRIBUTION",
+        {
+            "source_bus": source_bus,
+            "destination_bus": destination_bus,
+            "mw_amount": shifted_mw,
+        },
+    )
+    return {
+        "status": "Command Received",
+        "action": event,
+        "mw_amount": shifted_mw,
+    }
