@@ -1,13 +1,14 @@
 """Physics-only FastAPI service for the Project SWING digital twin."""
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
-from modules.config import runtime_settings
+from modules.config import runtime_paths, runtime_settings
 from modules.physics_engine.twin_model import TwinModel
 from modules.physics_engine.grid_metrics import get_resilience_index, get_security_metrics
 
@@ -154,3 +155,31 @@ def get_topology(grid: str = "118") -> dict[str, list[dict[str, object]]]:
         for line_id, line in net.line.iterrows()
     ]
     return {"nodes": nodes, "edges": edges}
+
+
+@app.get("/rl_status", tags=["optimization"])
+def get_rl_status() -> dict[str, dict[str, dict[str, object]]]:
+    """Report local policy archive presence and metadata without exposing paths."""
+    models_dir = runtime_paths().models
+    policy_stems = {
+        "SHED_LOAD": "shed_load",
+        "REDISPATCH_GEN": "redispatch_gen",
+    }
+    status: dict[str, dict[str, dict[str, object]]] = {}
+    for grid_id in ("39", "118"):
+        status[grid_id] = {}
+        for stem in policy_stems.values():
+            policy_path = models_dir / f"rl_optimizer_{stem}_{grid_id}.zip"
+            if policy_path.is_file():
+                stat = policy_path.stat()
+                status[grid_id][stem] = {
+                    "trained": True,
+                    "size_kb": round(stat.st_size / 1024, 1),
+                    "mtime": stat.st_mtime,
+                    "last_trained": datetime.fromtimestamp(
+                        stat.st_mtime, tz=timezone.utc
+                    ).isoformat(),
+                }
+            else:
+                status[grid_id][stem] = {"trained": False}
+    return status
