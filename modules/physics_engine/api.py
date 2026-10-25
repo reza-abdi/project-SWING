@@ -11,7 +11,7 @@ from typing import AsyncIterator, Literal
 
 import pandapower as pp
 from fastapi import FastAPI
-from fastapi import HTTPException, Query
+from fastapi import HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -601,6 +601,62 @@ def get_contingency_status(grid: str) -> dict[str, object]:
     cached["status"] = cache_status
     cached["age_seconds"] = round(age, 2)
     return cached
+
+
+def _json_safe(value):
+    """Replace non-finite measurements recursively before WebSocket encoding."""
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "item"):
+        value = value.item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def _telemetry_snapshot(twin: TwinModel) -> dict[str, object]:
+    """Build one self-consistent JSON-safe telemetry snapshot."""
+    net = copy.deepcopy(twin.net)
+
+    def records(frame, columns: tuple[str, ...]) -> list[dict[str, object]]:
+        if frame is None:
+            return []
+        return [
+            {"id": int(index), **{column: row.get(column) for column in columns if column in row}}
+            for index, row in frame.iterrows()
+        ]
+
+    return _json_safe({
+        "grid": twin.grid_type,
+        "timestamp": time.time(),
+        "lines": records(net.res_line, ("p_from_mw", "p_to_mw", "i_from_ka", "i_to_ka", "loading_percent")),
+        "buses": records(net.res_bus, ("vm_pu", "va_degree")),
+        "loads": records(net.res_load, ("p_mw", "q_mvar")),
+        "resilience": get_resilience_index(net),
+    })
+
+
+@app.websocket("/ws/telemetry/{grid}")
+async def stream_telemetry(websocket: WebSocket, grid: str) -> None:
+    """Stream one-second snapshots for an available grid."""
+    try:
+        grid_id = validate_grid_id(grid)
+    except ValueError:
+        await websocket.close(code=1008)
+        return
+    twin = grids.get(grid_id)
+    if twin is None:
+        await websocket.close(code=1013)
+        return
+    await websocket.accept()
+    try:
+        while True:
+            await websocket.send_json(_telemetry_snapshot(twin))
+            await asyncio.sleep(1.0)
+    except WebSocketDisconnect:
+        return
 
 
 @asynccontextmanager
