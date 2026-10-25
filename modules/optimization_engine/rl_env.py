@@ -75,3 +75,42 @@ class GridOptimizeEnv(gym.Env):
                 "derate_multiplier": derate_multiplier,
             }
         raise RuntimeError(f"could not find a convergent {self.grid_id}-bus reset in {self.reset_attempts} attempts")
+
+    def step(self, action):
+        """Apply one sampled bounded action to a candidate network."""
+        action_index = int(action)
+        if not self.action_space.contains(action_index):
+            raise ValueError("action must select SHED_LOAD or REDISPATCH_GEN")
+        action_type = self.ACTION_TYPES[action_index]
+        candidate = copy.deepcopy(self.net)
+        facilities = candidate.load if action_type == "SHED_LOAD" else candidate.gen
+        if facilities.empty:
+            raise RuntimeError(f"{action_type} has no available facility")
+        facility_index = int(self.np_random.choice(list(facilities.index)))
+        target_bus = int(facilities.at[facility_index, "bus"])
+        amount = min(self.max_action_mw, float(facilities.at[facility_index, "p_mw"]))
+        if amount <= 0:
+            raise RuntimeError(f"{action_type} has no positive available MW")
+        if action_type == "SHED_LOAD":
+            candidate.load.at[facility_index, "p_mw"] -= amount
+        else:
+            candidate.gen.at[facility_index, "p_mw"] += amount
+        converged = True
+        try:
+            pp.runpp(candidate)
+        except (pp.LoadflowNotConverged, ValueError, FloatingPointError):
+            converged = False
+        if not converged or not bool(candidate.converged):
+            max_loading = float("inf")
+        else:
+            self.net = candidate
+            max_loading = float(candidate.res_line["loading_percent"].max()) if len(candidate.res_line) else 0.0
+        observation = build_observation_vector(self.net, target_bus)
+        info = {
+            "action_type": action_type,
+            "target_bus": target_bus,
+            "mw_amount": amount,
+            "converged": converged,
+            "max_loading_percent": max_loading if math.isfinite(max_loading) else None,
+        }
+        return observation, 0.0, True, False, info
