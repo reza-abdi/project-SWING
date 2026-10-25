@@ -124,3 +124,21 @@ class GridForecaster:
                 raise ValueError(f"Quantile model {path.name} has incompatible feature names or order")
             loaded[quantile] = model
         self.models = loaded
+
+    def forecast_next_hour(self, recent_features: dict[str, float], current_grid_baseline_mw: float) -> dict[str, float]:
+        """Predict q10/q50/q90 and convert normalized load to physical MW."""
+        if not hasattr(self, "models") or set(self.models) != {0.10, 0.50, 0.90}:
+            raise RuntimeError("Load or train all three quantile models before forecasting")
+        if not np.isfinite(current_grid_baseline_mw) or current_grid_baseline_mw <= 0:
+            raise ValueError("current_grid_baseline_mw must be finite and positive")
+        missing = [name for name in self.FEATURE_COLUMNS if name not in recent_features]
+        if missing:
+            raise ValueError(f"forecast features are missing: {missing}")
+        row = pd.DataFrame([[recent_features[name] for name in self.FEATURE_COLUMNS]], columns=self.FEATURE_COLUMNS)
+        values = {}
+        for quantile, model in self.models.items():
+            prediction = float(np.asarray(model.predict(row)).reshape(-1)[0])
+            if not np.isfinite(prediction):
+                raise ValueError(f"quantile {quantile} model returned a non-finite prediction")
+            values[f"p{int(quantile * 100)}"] = prediction * float(current_grid_baseline_mw)
+        return values
