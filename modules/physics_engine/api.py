@@ -4,10 +4,12 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 from modules.config import runtime_settings
 from modules.physics_engine.twin_model import TwinModel
+from modules.physics_engine.grid_metrics import get_resilience_index, get_security_metrics
 
 
 grids: dict[str, TwinModel] = {}
@@ -78,3 +80,30 @@ def read_health() -> JSONResponse:
             },
         },
     )
+
+
+@app.get("/grid_status", tags=["grid"])
+def get_grid_status(grid: str = "39") -> dict[str, object]:
+    """Return live demand, generation, resilience, and bus load measurements."""
+    if grid not in grids:
+        raise HTTPException(status_code=404, detail="Grid not found")
+
+    net = grids[grid].net
+    total_demand_mw = float(net.load["p_mw"].sum())
+    total_generation_mw = float(net.gen.loc[net.gen["in_service"], "p_mw"].sum())
+    bus_loads = {str(int(bus_id)): 0.0 for bus_id in net.bus.index}
+    for _, load in net.load.iterrows():
+        bus_id = str(int(load["bus"]))
+        bus_loads[bus_id] += float(load["p_mw"])
+
+    return {
+        "active_grid": f"IEEE {grid}-Bus",
+        "buses": len(net.bus),
+        "lines": len(net.line),
+        "total_demand_mw": round(total_demand_mw, 2),
+        "total_generation_capacity_mw": round(total_generation_mw, 2),
+        "capacity_max_mw": round(total_demand_mw, 2),
+        "resilience": get_resilience_index(net),
+        "security": get_security_metrics(net),
+        "bus_loads": bus_loads,
+    }
