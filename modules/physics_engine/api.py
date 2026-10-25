@@ -2,11 +2,12 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
 
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from modules.config import runtime_paths, runtime_settings
 from modules.physics_engine.twin_model import TwinModel
@@ -14,6 +15,37 @@ from modules.physics_engine.grid_metrics import get_resilience_index, get_securi
 
 
 grids: dict[str, TwinModel] = {}
+GridId = Literal["39", "118"]
+ActionType = Literal["SHED_LOAD", "REDISPATCH_GEN", "LOAD_REDISTRIBUTION"]
+
+
+class ActionRequest(BaseModel):
+    """Validated payload for a non-mutating action feasibility check."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action_type: ActionType
+    target_bus: int = Field(ge=0, strict=True)
+    mw_amount: float = Field(ge=0.0, allow_inf_nan=False)
+    secondary_bus: int | None = Field(default=None, ge=0, strict=True)
+
+    @model_validator(mode="after")
+    def validate_bus_pair(self) -> "ActionRequest":
+        if self.action_type == "LOAD_REDISTRIBUTION":
+            if self.secondary_bus is None:
+                raise ValueError("secondary_bus is required for LOAD_REDISTRIBUTION")
+            if self.secondary_bus == self.target_bus:
+                raise ValueError("redistribution buses must be distinct")
+        elif self.secondary_bus is not None:
+            raise ValueError("secondary_bus is only valid for LOAD_REDISTRIBUTION")
+        return self
+
+
+def validate_grid_id(grid_id: str) -> GridId:
+    """Restrict API grid selection to the two supported IEEE network IDs."""
+    if grid_id not in {"39", "118"}:
+        raise ValueError("grid must be '39' or '118'")
+    return grid_id  # type: ignore[return-value]
 
 
 def initialize_grids(settings=None) -> dict[str, TwinModel]:
