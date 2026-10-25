@@ -104,105 +104,98 @@ class TwinModel:
         self.state_history[self.time_step] = copy.deepcopy(state)
         return self.current_state
 
+    def _solve_candidate(
+        self,
+        candidate_net,
+        event: str,
+        candidate_assets: dict[str, object] | None = None,
+        failure_event: str | None = None,
+    ) -> str:
+        """Commit a candidate grid only when its Newton-Raphson solve converges."""
+        self.simulation_status = "RUNNING"
+        try:
+            pp.runpp(candidate_net, algorithm="nr")
+        except pp.LoadflowNotConverged:
+            failure_state: dict[str, object] = {
+                "grid_type": self.grid_type,
+                "current_scenario": self.current_scenario,
+                "asset_health": copy.deepcopy(self.asset_registry),
+                "grid_resilience_index": 0.0,
+                "collapsed": True,
+            }
+            self.update_state(failure_state, "FAILED", failure_event or event)
+            return self.simulation_status
+
+        self.net = candidate_net
+        if candidate_assets is not None:
+            self.asset_registry = candidate_assets
+        self.update_state(self.get_current_state(), "COMPLETED", event)
+        return self.simulation_status
+
     def run_baseline_simulation(self) -> dict[str, object]:
         """Run Newton-Raphson power flow and return a state or failure snapshot."""
         self.simulation_status = "RUNNING"
         self.event_history.append("Baseline Simulation Started")
-        try:
-            pp.runpp(self.net, algorithm="nr")
-        except pp.LoadflowNotConverged:
-            event = "Baseline Simulation Failed"
-            summary: dict[str, object] = {
-                "grid_type": self.grid_type,
-                "current_scenario": self.current_scenario,
-                "grid_resilience_index": 0.0,
-                "collapsed": True,
-            }
-            return self.update_state(summary, "FAILED", event)
-
+        candidate_net = copy.deepcopy(self.net)
         event = "Baseline Simulation Completed"
-        summary = self.get_current_state()
-        return self.update_state(summary, "COMPLETED", event)
+        self._solve_candidate(
+            candidate_net,
+            event,
+            failure_event="Baseline Simulation Failed",
+        )
+        return self.current_state
 
     def trip_generator(self, gen_id: int, trip_type: str = "FORCED_OUTAGE") -> str:
         """Trip a generator, update its asset record, and rerun AC power flow."""
-        self.net, self.asset_registry = simulate_generator_trip(
-            self.net, self.asset_registry, gen_id, trip_type
+        candidate_net = copy.deepcopy(self.net)
+        candidate_assets = copy.deepcopy(self.asset_registry)
+        candidate_net, candidate_assets = simulate_generator_trip(
+            candidate_net, candidate_assets, gen_id, trip_type
         )
         event = f"Generator {gen_id} Tripped ({trip_type})"
         self.current_scenario = event
-        self.simulation_status = "RUNNING"
-        try:
-            pp.runpp(self.net, algorithm="nr")
-        except pp.LoadflowNotConverged:
-            self.update_state(self.get_current_state(), "FAILED", event)
-        else:
-            self.update_state(self.get_current_state(), "COMPLETED", event)
-        return self.simulation_status
+        return self._solve_candidate(candidate_net, event, candidate_assets)
 
     def apply_weather_event(self, event_type: str = "HEATWAVE", severity: float = 1.0) -> str:
         """Apply a weather stress event, then rerun power flow and track its status."""
-        self.net, self.asset_registry = simulate_weather_event(
-            self.net, self.asset_registry, event_type, severity
+        candidate_net = copy.deepcopy(self.net)
+        candidate_assets = copy.deepcopy(self.asset_registry)
+        candidate_net, candidate_assets = simulate_weather_event(
+            candidate_net, candidate_assets, event_type, severity
         )
         event = f"Weather Event: {event_type} ({severity}x)"
         self.current_scenario = event
-        self.simulation_status = "RUNNING"
-        try:
-            pp.runpp(self.net, algorithm="nr")
-        except pp.LoadflowNotConverged:
-            self.update_state(self.get_current_state(), "FAILED", event)
-        else:
-            self.update_state(self.get_current_state(), "COMPLETED", event)
-        return self.simulation_status
+        return self._solve_candidate(candidate_net, event, candidate_assets)
 
     def ramp_renewables(self, ramp_percent: float, renewable_gen_ids: list[int] | None = None) -> str:
         """Curtail selected generator output and rerun power flow."""
-        self.net = ramp_down_renewables(self.net, ramp_percent, renewable_gen_ids)
+        candidate_net = copy.deepcopy(self.net)
+        candidate_net = ramp_down_renewables(candidate_net, ramp_percent, renewable_gen_ids)
         event = f"Renewables ramped down by {float(ramp_percent):g}%"
         self.current_scenario = event
-        self.simulation_status = "RUNNING"
-        try:
-            pp.runpp(self.net, algorithm="nr")
-        except pp.LoadflowNotConverged:
-            self.update_state(self.get_current_state(), "FAILED", event)
-        else:
-            self.update_state(self.get_current_state(), "COMPLETED", event)
-        return self.simulation_status
+        return self._solve_candidate(candidate_net, event)
 
     def trip_line(self, line_id: int) -> str:
         """Take a valid transmission line out of service and solve the grid."""
         if line_id not in self.net.line.index:
             raise ValueError(f"Line {line_id} not found in network.")
 
-        self.net.line.at[line_id, "in_service"] = False
+        candidate_net = copy.deepcopy(self.net)
+        candidate_net.line.at[line_id, "in_service"] = False
         event = f"Line {line_id} Tripped"
         self.current_scenario = event
-        self.simulation_status = "RUNNING"
-        try:
-            pp.runpp(self.net, algorithm="nr")
-        except pp.LoadflowNotConverged:
-            self.update_state(self.get_current_state(), "FAILED", event)
-        else:
-            self.update_state(self.get_current_state(), "COMPLETED", event)
-        return self.simulation_status
+        return self._solve_candidate(candidate_net, event)
 
     def restore_line(self, line_id: int) -> str:
         """Return a valid transmission line to service and solve the grid."""
         if line_id not in self.net.line.index:
             raise ValueError(f"Line {line_id} not found in network.")
 
-        self.net.line.at[line_id, "in_service"] = True
+        candidate_net = copy.deepcopy(self.net)
+        candidate_net.line.at[line_id, "in_service"] = True
         event = f"Line {line_id} Restored"
         self.current_scenario = event
-        self.simulation_status = "RUNNING"
-        try:
-            pp.runpp(self.net, algorithm="nr")
-        except pp.LoadflowNotConverged:
-            self.update_state(self.get_current_state(), "FAILED", event)
-        else:
-            self.update_state(self.get_current_state(), "COMPLETED", event)
-        return self.simulation_status
+        return self._solve_candidate(candidate_net, event)
 
     def inject_line_fault(self, line_index: int) -> str:
         """Compatibility alias for the original line fault operation."""
@@ -234,17 +227,11 @@ class TwinModel:
             raise ValueError(f"Bus {bus_index} does not have a load facility attached to it.")
 
         load_id = matching_loads[0]
-        self.net.load.at[load_id, "p_mw"] = load_mw
+        candidate_net = copy.deepcopy(self.net)
+        candidate_net.load.at[load_id, "p_mw"] = load_mw
         event = f"Load on Bus {bus_index} Updated"
         self.current_scenario = event
-        self.simulation_status = "RUNNING"
-        try:
-            pp.runpp(self.net, algorithm="nr")
-        except pp.LoadflowNotConverged:
-            self.update_state(self.get_current_state(), "FAILED", event)
-        else:
-            self.update_state(self.get_current_state(), "COMPLETED", event)
-        return self.simulation_status
+        return self._solve_candidate(candidate_net, event)
 
     def apply_stress_test(self, load_multiplier: float, derate_multiplier: float) -> str:
         """Set load and line ratings relative to the original IEEE case values."""
@@ -258,19 +245,13 @@ class TwinModel:
         if not math.isfinite(line_factor) or line_factor <= 0.0:
             raise ValueError("derate_multiplier must be finite and positive")
 
-        self.net.load["p_mw"] = self.baseline_load_p_mw * load_factor
-        self.net.load["q_mvar"] = self.baseline_load_q_mvar * load_factor
-        self.net.line["max_i_ka"] = self.baseline_max_i_ka * line_factor
+        candidate_net = copy.deepcopy(self.net)
+        candidate_net.load["p_mw"] = self.baseline_load_p_mw * load_factor
+        candidate_net.load["q_mvar"] = self.baseline_load_q_mvar * load_factor
+        candidate_net.line["max_i_ka"] = self.baseline_max_i_ka * line_factor
         event = (
             f"Stress Test (Load {load_factor * 100:.0f}%, "
             f"Line Capacity {line_factor * 100:.0f}%)"
         )
         self.current_scenario = event
-        self.simulation_status = "RUNNING"
-        try:
-            pp.runpp(self.net, algorithm="nr")
-        except pp.LoadflowNotConverged:
-            self.update_state(self.get_current_state(), "FAILED", event)
-        else:
-            self.update_state(self.get_current_state(), "COMPLETED", event)
-        return self.simulation_status
+        return self._solve_candidate(candidate_net, event)
