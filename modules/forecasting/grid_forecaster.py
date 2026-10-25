@@ -135,10 +135,30 @@ class GridForecaster:
         if missing:
             raise ValueError(f"forecast features are missing: {missing}")
         row = pd.DataFrame([[recent_features[name] for name in self.FEATURE_COLUMNS]], columns=self.FEATURE_COLUMNS)
-        values = {}
+        predictions = []
         for quantile, model in self.models.items():
             prediction = float(np.asarray(model.predict(row)).reshape(-1)[0])
             if not np.isfinite(prediction):
                 raise ValueError(f"quantile {quantile} model returned a non-finite prediction")
-            values[f"p{int(quantile * 100)}"] = prediction * float(current_grid_baseline_mw)
-        return values
+            predictions.append(max(0.0, prediction))
+        ordered = np.maximum.accumulate(predictions) * float(current_grid_baseline_mw)
+        return {f"p{int(quantile * 100)}": float(value) for quantile, value in zip((0.10, 0.50, 0.90), ordered)}
+
+    def explain_prediction(self, recent_features: dict[str, float]) -> dict[str, object]:
+        """Explain the current p50 forecast and rank all feature drivers."""
+        if not hasattr(self, "models") or 0.50 not in self.models:
+            raise RuntimeError("Load or train the p50 model before explaining a forecast")
+        missing = [name for name in self.FEATURE_COLUMNS if name not in recent_features]
+        if missing:
+            raise ValueError(f"forecast features are missing: {missing}")
+        row = pd.DataFrame([[recent_features[name] for name in self.FEATURE_COLUMNS]], columns=self.FEATURE_COLUMNS)
+        import shap
+
+        explainer = shap.TreeExplainer(self.models[0.50])
+        raw_values = np.asarray(explainer.shap_values(row), dtype=float).reshape(-1)
+        if raw_values.size != len(self.FEATURE_COLUMNS) or not np.all(np.isfinite(raw_values)):
+            raise ValueError("SHAP returned an incompatible contribution vector")
+        contributions = dict(zip(self.FEATURE_COLUMNS, raw_values.tolist()))
+        ranked = sorted(contributions.items(), key=lambda item: abs(item[1]), reverse=True)
+        expected = float(np.asarray(explainer.expected_value).reshape(-1)[0])
+        return {"base_value": expected, "contributions": contributions, "ranked_features": ranked}
