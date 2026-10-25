@@ -107,3 +107,50 @@ def get_grid_status(grid: str = "39") -> dict[str, object]:
         "security": get_security_metrics(net),
         "bus_loads": bus_loads,
     }
+
+
+@app.get("/topology", tags=["grid"])
+def get_topology(grid: str = "118") -> dict[str, list[dict[str, object]]]:
+    """Return Cytoscape-compatible bus nodes and transmission-line edges."""
+    if grid not in grids:
+        raise HTTPException(status_code=404, detail="Grid not found")
+
+    net = grids[grid].net
+    generator_buses = set(net.gen["bus"].tolist())
+    transformer_buses = set(net.trafo["hv_bus"].tolist()) | set(
+        net.trafo["lv_bus"].tolist()
+    )
+    nodes = []
+    for bus_id in net.bus.index:
+        attached_loads = net.load.loc[net.load["bus"] == bus_id, "p_mw"]
+        current_load = float(attached_loads.sum())
+        if bus_id in generator_buses:
+            node_type = "GENERATOR"
+        elif bus_id in transformer_buses:
+            node_type = "TRANSFORMER"
+        elif current_load > 0.0:
+            node_type = "LOAD"
+        else:
+            node_type = "JUNCTION"
+        nodes.append(
+            {
+                "data": {
+                    "id": str(int(bus_id)),
+                    "label": f"Bus {int(bus_id)}",
+                    "load": current_load,
+                    "node_type": node_type,
+                }
+            }
+        )
+
+    edges = [
+        {
+            "data": {
+                "id": f"line{int(line_id)}",
+                "source": str(int(line["from_bus"])),
+                "target": str(int(line["to_bus"])),
+            }
+        }
+        for line_id, line in net.line.iterrows()
+    ]
+    return {"nodes": nodes, "edges": edges}
