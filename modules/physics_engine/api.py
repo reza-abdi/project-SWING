@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 import copy
 from datetime import datetime, timezone
+from importlib import import_module
 import math
 from typing import AsyncIterator, Literal
 
@@ -349,6 +350,75 @@ def _smart_order_router(base_net, request: OptimizeRequest) -> dict[str, object]
         "target_bus": request.target_bus,
         "secondary_bus": request.secondary_bus,
     }
+
+
+@app.post("/optimize_action/{grid}", tags=["optimization"])
+def optimize_action(grid: str, request: OptimizeRequest) -> dict[str, object]:
+    """Suggest a bounded action using a validated SAC result or physics search."""
+    try:
+        grid_id = validate_grid_id(grid)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Grid not found") from exc
+    if grid_id not in grids:
+        raise HTTPException(status_code=503, detail="Grid simulator is unavailable")
+
+    base_net = grids[grid_id].net
+    physical_ceiling = _physical_action_ceiling(
+        base_net, request.action_type, request.target_bus
+    )
+    bounded_request = request.model_copy(
+        update={
+            "search_ceiling_mw": min(request.search_ceiling_mw, physical_ceiling)
+            if physical_ceiling > 0.0
+            else request.search_ceiling_mw
+        }
+    )
+    rl_error: str | None = None
+    if request.action_type in {"SHED_LOAD", "REDISPATCH_GEN"} and physical_ceiling > 0.0:
+        try:
+            rl_env_module = import_module("modules.optimization_engine.rl_env")
+            optimizer_module = import_module("modules.optimization_engine.rl_optimizer")
+
+            optimizer = optimizer_module.RLOptimizer(grid_type=grid_id)
+            optimizer.load_model(request.action_type)
+            observation = rl_env_module.build_observation_vector(base_net, request.target_bus)
+            predicted_mw = float(optimizer.predict_mw(observation))
+            if math.isfinite(predicted_mw) and 0.0 <= predicted_mw <= physical_ceiling:
+                converged, max_loading = _test_action(
+                    base_net,
+                    request.action_type,
+                    request.target_bus,
+                    predicted_mw,
+                    request.secondary_bus,
+                )
+                if converged and max_loading is not None and max_loading <= 100.2:
+                    return {
+                        "feasible": True,
+                        "mw_amount": round(predicted_mw, 4),
+                        "resulting_max_loading_percent": round(max_loading, 2),
+                        "method": "RL",
+                        "action_type": request.action_type,
+                        "target_bus": request.target_bus,
+                        "secondary_bus": request.secondary_bus,
+                    }
+            rl_error = "policy suggestion failed bounds or physics recheck"
+        except Exception as exc:
+            # Model loading and inference are optional; always fall through to physics search.
+            rl_error = type(exc).__name__
+
+    result = _smart_order_router(base_net, bounded_request)
+    result.setdefault("method", "SMART_ORDER_ROUTER")
+    if (
+        result.get("feasible")
+        and result.get("action_type") == request.action_type
+        and result.get("target_bus") == request.target_bus
+        and result.get("secondary_bus") == request.secondary_bus
+    ):
+        result["method"] = "BISECTION"
+    else:
+        result["method"] = "SMART_ORDER_ROUTER"
+    result["rl_fallback_reason"] = rl_error
+    return result
 
 
 @app.post("/validate_action/{grid}", tags=["optimization"])
