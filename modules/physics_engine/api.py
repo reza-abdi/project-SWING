@@ -9,11 +9,12 @@ from typing import AsyncIterator, Literal
 
 import pandapower as pp
 from fastapi import FastAPI
-from fastapi import HTTPException
+from fastapi import HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from modules.config import runtime_paths, runtime_settings
+from modules.event_store import log_event
 from modules.physics_engine.twin_model import TwinModel
 from modules.physics_engine.grid_metrics import get_resilience_index, get_security_metrics
 
@@ -633,3 +634,37 @@ def get_rl_status() -> dict[str, dict[str, dict[str, object]]]:
             else:
                 status[grid_id][stem] = {"trained": False}
     return status
+
+
+@app.post("/change_load/{bus_id}", tags=["actuation"])
+def update_grid_load(
+    bus_id: int,
+    new_mw: float = Query(ge=0.0, allow_inf_nan=False),
+    grid: str = "118",
+) -> dict[str, str]:
+    """Atomically update one load facility and record the successful action."""
+    try:
+        grid_id = validate_grid_id(grid)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Grid not found") from exc
+    if grid_id not in grids:
+        raise HTTPException(status_code=503, detail="Grid simulator is unavailable")
+
+    twin = grids[grid_id]
+    try:
+        status = twin.change_load(bus_id, new_mw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if status != "COMPLETED":
+        raise HTTPException(status_code=422, detail="Load change did not converge; live grid was preserved")
+
+    log_event(
+        "digital_twin",
+        grid_id,
+        "LOAD_CHANGE",
+        {"bus_id": bus_id, "new_mw": new_mw},
+    )
+    return {
+        "status": "Command Received",
+        "action": f"Updated Facility {bus_id} to {new_mw}MW",
+    }
