@@ -168,3 +168,41 @@ class TwinModel:
         else:
             self.update_state(self.get_current_state(), "COMPLETED", event)
         return self.simulation_status
+
+    def trip_line(self, line_id: int) -> str:
+        """Take a valid transmission line out of service and solve the grid."""
+        if line_id not in self.net.line.index:
+            raise ValueError(f"Line {line_id} not found in network.")
+
+        self.net.line.at[line_id, "in_service"] = False
+        event = f"Line {line_id} Tripped"
+        self.current_scenario = event
+        self.simulation_status = "RUNNING"
+        try:
+            pp.runpp(self.net, algorithm="nr")
+        except pp.LoadflowNotConverged:
+            self.update_state(self.get_current_state(), "FAILED", event)
+        else:
+            self.update_state(self.get_current_state(), "COMPLETED", event)
+        return self.simulation_status
+
+    def restore_line(self, line_id: int) -> str:
+        """Return a valid transmission line to service and solve the grid."""
+        if line_id not in self.net.line.index:
+            raise ValueError(f"Line {line_id} not found in network.")
+
+        self.net.line.at[line_id, "in_service"] = True
+        event = f"Line {line_id} Restored"
+        self.current_scenario = event
+        self.simulation_status = "RUNNING"
+        try:
+            pp.runpp(self.net, algorithm="nr")
+        except pp.LoadflowNotConverged:
+            self.update_state(self.get_current_state(), "FAILED", event)
+        else:
+            self.update_state(self.get_current_state(), "COMPLETED", event)
+        return self.simulation_status
+
+    def inject_line_fault(self, line_index: int) -> str:
+        """Compatibility alias for the original line fault operation."""
+        return self.trip_line(line_index)
