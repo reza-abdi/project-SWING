@@ -1,10 +1,12 @@
 """Physics-only FastAPI service for the Project SWING digital twin."""
 
 from contextlib import asynccontextmanager
+import copy
 from datetime import datetime, timezone
 import math
 from typing import AsyncIterator, Literal
 
+import pandapower as pp
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -102,6 +104,29 @@ def _apply_action(
         return True
 
     return False
+
+
+def _test_action(
+    base_net,
+    action_type: str,
+    target_bus: int,
+    mw_amount: float,
+    secondary_bus: int | None = None,
+) -> tuple[bool | None, float | None]:
+    """Solve a corrective action on a deep copy without changing live state."""
+    test_net = copy.deepcopy(base_net)
+    if not _apply_action(test_net, action_type, target_bus, mw_amount, secondary_bus):
+        return None, None
+    try:
+        pp.runpp(test_net, algorithm="nr")
+    except pp.LoadflowNotConverged:
+        return False, None
+    if test_net.res_line.empty:
+        return True, 0.0
+    max_loading = float(test_net.res_line["loading_percent"].max())
+    if not math.isfinite(max_loading):
+        return False, None
+    return True, max_loading
 
 
 def initialize_grids(settings=None) -> dict[str, TwinModel]:
