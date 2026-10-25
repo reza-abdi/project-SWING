@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 import sys
 
@@ -27,6 +28,36 @@ def train(grid: str, action: str, timesteps: int, output_dir: Path | None = None
         raise ValueError("timesteps must be positive")
     from pandapower import networks
     from stable_baselines3 import SAC
+    from stable_baselines3.common.callbacks import BaseCallback
+
+    class RewardCSVLogger(BaseCallback):
+        def __init__(self, csv_path: Path):
+            super().__init__(verbose=0)
+            self.csv_path = csv_path
+            self.file = None
+            self.writer = None
+
+        def _on_training_start(self) -> None:
+            self.csv_path.parent.mkdir(parents=True, exist_ok=True)
+            self.file = self.csv_path.open("w", newline="", encoding="utf-8")
+            self.writer = csv.writer(self.file)
+            self.writer.writerow(["timestep", "reward", "resulting_max_loading", "mw_amount", "converged"])
+
+        def _on_step(self) -> bool:
+            for info, reward in zip(self.locals.get("infos", [{}]), self.locals.get("rewards", [0.0])):
+                self.writer.writerow([
+                    self.num_timesteps,
+                    float(reward),
+                    info.get("max_loading_percent"),
+                    info.get("mw_amount"),
+                    info.get("converged"),
+                ])
+            return True
+
+        def _on_training_end(self) -> None:
+            if self.file is not None:
+                self.file.close()
+                self.file = None
 
     base_net = networks.case39() if grid == "39" else networks.case118()
     env = GridOptimizeEnv(grid, net=base_net, action_type=action)
@@ -34,7 +65,8 @@ def train(grid: str, action: str, timesteps: int, output_dir: Path | None = None
     models_dir = output_dir or runtime_paths().models
     models_dir.mkdir(parents=True, exist_ok=True)
     artifact = models_dir / f"rl_optimizer_{action.lower()}_{grid}.zip"
-    model.learn(total_timesteps=timesteps)
+    log_path = models_dir / f"rl_optimizer_{action.lower()}_{grid}_rewards.csv"
+    model.learn(total_timesteps=timesteps, callback=RewardCSVLogger(log_path))
     model.save(str(artifact))
     return artifact
 
