@@ -6,6 +6,7 @@ import hashlib
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 
 from modules.config import runtime_paths
 
@@ -107,3 +108,28 @@ class TFTForecaster:
         frame.attrs["encoder_length"] = window
         frame.attrs["prediction_length"] = prediction_length
         return frame
+
+    def forecast_multi_horizon(self, recent_history_df: pd.DataFrame, training_dataset=None) -> dict[str, list[float]]:
+        """Return p10/p50/p90 vectors over the model's full 24-hour horizon."""
+        if self.model is None:
+            raise RuntimeError("Call load_model(trust_checkpoint=True) before forecasting")
+        dataset = training_dataset if training_dataset is not None else self.training_dataset_params
+        if dataset is None:
+            raise RuntimeError("Call load_training_dataset_config(trust_dataset=True) before forecasting")
+        import torch
+        from pytorch_forecasting import TimeSeriesDataSet
+
+        inference_dataset = TimeSeriesDataSet.from_dataset(
+            dataset, recent_history_df, predict=True, stop_randomization=True
+        )
+        dataloader = inference_dataset.to_dataloader(train=False, batch_size=1, num_workers=0)
+        with torch.no_grad():
+            raw = self.model.predict(dataloader, mode="quantiles")
+        if hasattr(raw, "detach"):
+            raw = raw.detach().cpu().numpy()
+        values = np.asarray(raw)
+        if values.ndim != 3 or values.shape[0] != 1 or values.shape[1] != 24 or values.shape[2] != 3:
+            raise ValueError("TFT prediction must have shape (1, 24, 3) for p10/p50/p90")
+        if not np.isfinite(values).all():
+            raise ValueError("TFT prediction contains non-finite values")
+        return {key: [float(item) for item in values[0, :, index]] for index, key in enumerate(("p10", "p50", "p90"))}
