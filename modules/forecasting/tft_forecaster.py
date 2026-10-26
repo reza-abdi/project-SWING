@@ -74,3 +74,36 @@ class TFTForecaster:
             raise TypeError("serialized TFT dataset has an unexpected type")
         self.training_dataset_params = dataset
         return dataset
+
+    def build_recent_history_window(
+        self,
+        window: int = 168,
+        csv_path: str | Path | None = None,
+        *,
+        prediction_length: int = 24,
+    ) -> pd.DataFrame:
+        """Return 168 encoder plus 24 known-covariate rows from historical CSV."""
+        if window < 1 or prediction_length < 1:
+            raise ValueError("window and prediction_length must be positive")
+        path = Path(csv_path) if csv_path is not None else runtime_paths().data / "processed_data" / "tft_ready_data.csv"
+        if not path.is_file():
+            raise FileNotFoundError(f"historical TFT feature data is missing: {path}")
+        frame = pd.read_csv(path)
+        if "Datetime" not in frame.columns:
+            raise ValueError("historical TFT data must include Datetime")
+        frame["Datetime"] = pd.to_datetime(frame["Datetime"], errors="raise")
+        frame = frame.sort_values("Datetime").tail(window + prediction_length).reset_index(drop=True)
+        expected_length = window + prediction_length
+        if len(frame) != expected_length:
+            raise ValueError(f"historical TFT data needs at least {expected_length} hourly rows")
+        gaps = frame["Datetime"].diff().dropna()
+        if not bool((gaps == pd.Timedelta(hours=1)).all()):
+            raise ValueError("historical TFT inference window must contain contiguous hourly rows")
+        for column in ("month", "dayofweek", "hour", "region"):
+            if column in frame.columns:
+                frame[column] = frame[column].astype(str)
+        frame.attrs["source_type"] = "historical_proxy"
+        frame.attrs["source_description"] = "tail of processed historical data; not live telemetry"
+        frame.attrs["encoder_length"] = window
+        frame.attrs["prediction_length"] = prediction_length
+        return frame
