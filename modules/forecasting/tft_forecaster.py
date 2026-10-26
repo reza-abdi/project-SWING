@@ -133,3 +133,34 @@ class TFTForecaster:
         if not np.isfinite(values).all():
             raise ValueError("TFT prediction contains non-finite values")
         return {key: [float(item) for item in values[0, :, index]] for index, key in enumerate(("p10", "p50", "p90"))}
+
+    def forecast_or_fallback(
+        self,
+        recent_history_df: pd.DataFrame,
+        recent_features: dict[str, float],
+        current_grid_baseline_mw: float,
+        lightgbm_forecaster,
+        *,
+        training_dataset=None,
+        trust_checkpoint: bool = False,
+        trust_dataset: bool = False,
+    ) -> dict[str, object]:
+        """Try 24-hour TFT inference, then use the single-hour LightGBM model."""
+        try:
+            if self.model is None:
+                self.load_model(trust_checkpoint=trust_checkpoint)
+            dataset = training_dataset if training_dataset is not None else self.training_dataset_params
+            if dataset is None:
+                dataset = self.load_training_dataset_config(trust_dataset=trust_dataset)
+            forecast = self.forecast_multi_horizon(recent_history_df, dataset)
+            return {"source": "TFT", "predictions": forecast, "fallback_reason": None}
+        except Exception as exc:
+            fallback = lightgbm_forecaster.forecast_next_hour(recent_features, current_grid_baseline_mw)
+            expected = {"p10", "p50", "p90"}
+            if set(fallback) != expected or not all(np.isfinite(float(fallback[key])) for key in expected):
+                raise ValueError("LightGBM fallback must return finite p10, p50, and p90 values") from exc
+            return {
+                "source": "LightGBM",
+                "predictions": {key: [float(fallback[key])] for key in ("p10", "p50", "p90")},
+                "fallback_reason": type(exc).__name__,
+            }
