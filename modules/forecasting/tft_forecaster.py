@@ -50,3 +50,27 @@ class TFTForecaster:
         model.to(torch.device("cpu"))
         model.eval()
         self.model = model
+
+    def load_training_dataset_config(
+        self,
+        dataset_path: str | Path | None = None,
+        *,
+        trust_dataset: bool = False,
+    ):
+        """Load the serialized TimeSeriesDataSet only after explicit hash trust."""
+        path = Path(dataset_path) if dataset_path is not None else runtime_paths().models / "training_dataset.pkl"
+        if not path.is_file():
+            raise FileNotFoundError(f"TFT training dataset configuration is missing: {path}")
+        if not trust_dataset:
+            raise PermissionError("TFT dataset pickle loading is disabled until its provenance is trusted")
+        if _sha256(path) != TFT_DATASET_SHA256:
+            raise ValueError("TFT dataset hash does not match the reviewed artifact")
+        import pickle
+        from pytorch_forecasting import TimeSeriesDataSet
+
+        with path.open("rb") as handle:
+            dataset = pickle.load(handle)
+        if not isinstance(dataset, TimeSeriesDataSet):
+            raise TypeError("serialized TFT dataset has an unexpected type")
+        self.training_dataset_params = dataset
+        return dataset
