@@ -1,9 +1,10 @@
 """Independent HTTP service for AI-assisted, human-approved grid proposals."""
 
 import asyncio
+from ipaddress import ip_address
 import math
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from modules.ai_agents.agent_core import GridState, build_agent_graph
@@ -130,7 +131,7 @@ def configure_graph_runner(runner) -> None:
     _graph_runner = runner
 
 
-def _proposal_is_fresh(proposal: dict, twin: TwinClient) -> bool:
+def _proposal_is_fresh(proposal: dict, twin: TwinClient) -> dict | None:
     """Recheck physical state and run read-only validation before an approval can execute."""
     try:
         status = twin.grid_status(proposal["grid_id"])
@@ -153,9 +154,9 @@ def _proposal_is_fresh(proposal: dict, twin: TwinClient) -> bool:
             key: action[key] for key in ("action_type", "target_bus", "secondary_bus", "mw_amount")
             if key in action
         })
-        return validated.get("valid") is True
+        return status if validated.get("valid") is True else None
     except Exception:
-        return False
+        return None
 
 
 @app.post("/propose/{grid}")
@@ -193,3 +194,60 @@ async def reject_proposal(grid: str, proposal_id: str) -> dict[str, str]:
         raise HTTPException(status_code=409, detail="Proposal is no longer pending")
     log_event("ai", grid, "PROPOSAL_REJECTED", {"proposal_id": proposal_id})
     return {"proposal_id": proposal_id, "status": "rejected"}
+
+
+class ExecuteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    proposal_id: str = Field(min_length=36, max_length=36)
+
+
+def _require_local_operator() -> None:
+    """Permit writes only on loopback until verified remote identity is implemented."""
+    host = runtime_settings().agent_bind_host
+    try:
+        loopback = host.lower() == "localhost" or ip_address(host).is_loopback
+    except ValueError:
+        loopback = False
+    if not loopback:
+        raise HTTPException(status_code=503, detail="Verified operator identity is required for remote execution")
+
+
+@app.post("/execute/{grid}")
+async def execute_proposal(grid: str, request: ExecuteRequest, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128)) -> dict:
+    if grid not in {"39", "118"}:
+        raise HTTPException(status_code=404, detail="Grid not found")
+    _require_local_operator()
+    proposal = proposal_store.get_proposal(request.proposal_id)
+    if proposal is None or proposal["grid_id"] != grid:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    if proposal["status"] != "pending":
+        raise HTTPException(status_code=409, detail="Proposal is no longer pending")
+    twin = TwinClient()
+    fresh_status = await asyncio.to_thread(_proposal_is_fresh, proposal, twin)
+    if fresh_status is None:
+        proposal_store.transition(request.proposal_id, "pending", "stale")
+        log_event("ai", grid, "PROPOSAL_STALE", {"proposal_id": request.proposal_id})
+        raise HTTPException(status_code=409, detail="Grid state changed or validation failed; generate a new proposal")
+    if not proposal_store.transition(request.proposal_id, "pending", "executing", idempotency_key=idempotency_key):
+        raise HTTPException(status_code=409, detail="Proposal has already been handled")
+    action = proposal["action"]
+    try:
+        amount = float(action["mw_amount"])
+        bus = int(action["target_bus"])
+        if action["action_type"] == "SHED_LOAD":
+            current_load = float(fresh_status["bus_loads"][str(bus)])
+            result = await asyncio.to_thread(twin.change_load, grid, bus, max(0.0, current_load - amount))
+        elif action["action_type"] == "REDISPATCH_GEN":
+            result = await asyncio.to_thread(twin.redispatch_gen, grid, bus, amount)
+        elif action["action_type"] == "LOAD_REDISTRIBUTION":
+            result = await asyncio.to_thread(twin.redistribute_load, grid, bus, int(action["secondary_bus"]), amount)
+        else:
+            raise ValueError("Only validated active actions can be executed")
+    except Exception as exc:
+        proposal_store.transition(request.proposal_id, "executing", "stale")
+        log_event("ai", grid, "PROPOSAL_EXECUTION_FAILED", {"proposal_id": request.proposal_id, "error": type(exc).__name__})
+        raise HTTPException(status_code=502, detail="Twin action failed; proposal is consumed") from exc
+    if not proposal_store.transition(request.proposal_id, "executing", "executed"):
+        raise HTTPException(status_code=409, detail="Action was sent but proposal state could not be finalized")
+    log_event("ai", grid, "PROPOSAL_EXECUTED", {"proposal_id": request.proposal_id, "action": action})
+    return {"proposal_id": request.proposal_id, "status": "executed", "result": result}

@@ -112,13 +112,14 @@ def transition(proposal_id: str, expected: str, target: str, *, now: float | Non
     initialize(path)
     with _connect(path) as connection:
         connection.execute("BEGIN IMMEDIATE")
-        connection.execute("""
-            UPDATE agent_proposals SET status='expired'
-            WHERE proposal_id=? AND status=? AND expires_at<=?
-        """, (proposal_id, expected, current))
+        if expected in {"pending", "approved"}:
+            connection.execute("""
+                UPDATE agent_proposals SET status='expired'
+                WHERE proposal_id=? AND status=? AND expires_at<=?
+            """, (proposal_id, expected, current))
         cursor = connection.execute("""
             UPDATE agent_proposals SET status=?, idempotency_key=COALESCE(?, idempotency_key)
-            WHERE proposal_id=? AND status=? AND expires_at>?
+            WHERE proposal_id=? AND status=? AND (expires_at>? OR status='executing')
         """, (target, idempotency_key, proposal_id, expected, current))
         connection.commit()
         return cursor.rowcount == 1
