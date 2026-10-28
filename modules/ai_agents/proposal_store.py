@@ -22,6 +22,8 @@ def _database(path: str | Path | None = None) -> Path:
 
 def _connect(path: str | Path | None = None) -> sqlite3.Connection:
     connection = sqlite3.connect(str(_database(path)), timeout=10.0, isolation_level=None)
+    connection.execute("PRAGMA busy_timeout = 10000")
+    connection.execute("PRAGMA journal_mode = WAL")
     connection.row_factory = sqlite3.Row
     return connection
 

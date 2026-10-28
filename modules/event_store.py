@@ -24,7 +24,10 @@ def _get_db_path(db_path: str | Path | None = None) -> Path:
 
 
 def _connect(db_path: str | Path | None = None) -> sqlite3.Connection:
-    return sqlite3.connect(str(_get_db_path(db_path)), timeout=10.0)
+    connection = sqlite3.connect(str(_get_db_path(db_path)), timeout=10.0)
+    connection.execute("PRAGMA busy_timeout = 10000")
+    connection.execute("PRAGMA journal_mode = WAL")
+    return connection
 
 
 def _migrate_to_v1(connection: sqlite3.Connection) -> None:
