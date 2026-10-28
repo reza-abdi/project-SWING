@@ -437,6 +437,20 @@ def optimizer_outcome_node(state: GridState) -> dict[str, object]:
     }
 
 
+def physics_validator_node(state: GridState, twin_client: TwinClient | None = None) -> dict[str, object]:
+    """Validate a candidate on the Twin's isolated physics copy; never mutate the live grid."""
+    if state.optimizer_feasible is not True or state.proposed_action.action_type == "NO_ACTION":
+        return {"validation_result": ValidationResult(valid=False, error="No optimized action is available.")}
+    client = twin_client or TwinClient()
+    payload = state.proposed_action.model_dump(exclude={"justification"})
+    try:
+        response = client.validate(state.grid_id, payload)
+        result = ValidationResult.model_validate(response)
+    except Exception as exc:
+        result = ValidationResult(valid=False, error=f"Physics validation unavailable: {type(exc).__name__}")
+    return {"validation_result": result}
+
+
 def retrieve_compliance_context(
     question: str,
     vector_store,
