@@ -258,7 +258,30 @@ def risk_assessment_node(state: GridState) -> dict[str, object]:
     overloaded = security.get("overloaded_line_count", 0)
     if isinstance(overloaded, (int, float)) and not isinstance(overloaded, bool) and overloaded > 0:
         return {"risk_level": "HIGH"}
-    return {"risk_level": state.risk_level}
+    threshold = state.capacity_max * 0.98
+    if not math.isfinite(threshold) or threshold <= 0:
+        return {"risk_level": "UNKNOWN"}
+
+    def bound(key: str):
+        value = state.forecast_bounds.get(key)
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            return None
+        return float(value)
+
+    p90_1h = bound("p90_1h")
+    p90_6h = bound("p90_6h")
+    p90_24h = bound("p90_24h")
+    if p90_1h is None:
+        return {"risk_level": "UNKNOWN"}
+    if p90_1h >= threshold:
+        return {"risk_level": "HIGH"}
+    if p90_1h >= threshold * 0.90 or (p90_6h is not None and p90_6h >= threshold):
+        return {"risk_level": "MEDIUM"}
+    if p90_24h is not None and p90_24h >= threshold:
+        return {"risk_level": "WATCH"}
+    return {"risk_level": "LOW"}
 
 
 def retrieve_compliance_context(
