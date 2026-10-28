@@ -284,6 +284,23 @@ def risk_assessment_node(state: GridState) -> dict[str, object]:
     return {"risk_level": "LOW"}
 
 
+def watch_operator_node(state: GridState) -> dict[str, object]:
+    """Return an observation-only brief for a 24-hour WATCH forecast."""
+    if state.risk_level != "WATCH":
+        return {"decision": "ROUTE_MISMATCH", "operator_brief": "WATCH route requires WATCH risk."}
+    horizon = state.forecast_bounds.get("p90_24h")
+    return {
+        "decision": "MONITOR",
+        "operator_brief": (
+            f"Monitor grid {state.grid_id}: the 24-hour upper forecast is "
+            f"{horizon:g} MW. No optimization or grid action was requested."
+            if isinstance(horizon, (int, float)) and not isinstance(horizon, bool)
+            else f"Monitor grid {state.grid_id}: elevated 24-hour risk; forecast bound unavailable."
+        ),
+        "proposed_action": ProposedAction(action_type="NO_ACTION"),
+    }
+
+
 def retrieve_compliance_context(
     question: str,
     vector_store,
