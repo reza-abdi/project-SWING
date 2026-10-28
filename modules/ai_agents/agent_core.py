@@ -350,6 +350,18 @@ def no_action_operator_node(state: GridState) -> dict[str, object]:
     }
 
 
+def agent_unavailable_node(error: Exception) -> dict[str, object]:
+    """Fail closed when a model provider fails, including quota exhaustion."""
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    reason = "quota limit" if status == 429 else type(error).__name__
+    return {
+        "decision": "AGENT_UNAVAILABLE",
+        "operator_brief": f"Decision support is unavailable ({reason}); request human assessment.",
+        "proposed_action": ProposedAction(action_type="NO_ACTION"),
+        "validation_result": ValidationResult(valid=False, error="No action was proposed."),
+    }
+
+
 def retrieve_compliance_context(
     question: str,
     vector_store,
