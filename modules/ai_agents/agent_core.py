@@ -255,6 +255,9 @@ def risk_assessment_node(state: GridState) -> dict[str, object]:
     security = situation.get("security") or {}
     if resilience.get("collapsed") or security.get("collapsed"):
         return {"risk_level": "CRITICAL"}
+    overloaded = security.get("overloaded_line_count", 0)
+    if isinstance(overloaded, (int, float)) and not isinstance(overloaded, bool) and overloaded > 0:
+        return {"risk_level": "HIGH"}
     return {"risk_level": state.risk_level}
 
 
