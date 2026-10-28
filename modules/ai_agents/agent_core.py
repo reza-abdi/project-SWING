@@ -69,3 +69,26 @@ def retrieve_compliance_context(
     if not parts:
         raise RAGUnavailableError("retrieved regulatory excerpts contain no usable text")
     return ComplianceContext(text="\n\n".join(parts), citations=tuple(citations), verified=True)
+
+
+def safe_compliance_lookup(question: str, vector_store=None) -> dict[str, object]:
+    """Convert missing corpus/index/retrieval into an explicit fail-closed state."""
+    try:
+        result = retrieve_compliance_context(question, vector_store)
+    except (RAGUnavailableError, ValueError):
+        return {
+            "status": "RAG_UNAVAILABLE",
+            "context": "",
+            "citations": [],
+            "decision_allowed": False,
+            "actuation_allowed": False,
+        }
+    return {
+        "status": "RAG_READY",
+        "context": result.text,
+        "citations": [
+            {"source": item.source, "page": item.page} for item in result.citations
+        ],
+        "decision_allowed": True,
+        "actuation_allowed": False,
+    }
