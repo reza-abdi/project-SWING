@@ -202,6 +202,37 @@ class ExecuteRequest(BaseModel):
     proposal_id: str = Field(min_length=36, max_length=36)
 
 
+class ChatMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: str
+    content: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        if value not in {"user", "assistant"}:
+            raise ValueError("history roles must be user or assistant")
+        return value
+
+
+class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(min_length=1, max_length=4000)
+    history: list[ChatMessage] = Field(default_factory=list, max_length=20)
+
+    @field_validator("message")
+    @classmethod
+    def reject_blank_message(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("message must not be blank")
+        return value
+
+    @field_validator("history")
+    @classmethod
+    def trim_history(cls, value: list[ChatMessage]) -> list[ChatMessage]:
+        return value[-10:]
+
+
 def _require_local_operator() -> None:
     """Permit writes only on loopback until verified remote identity is implemented."""
     host = runtime_settings().agent_bind_host
