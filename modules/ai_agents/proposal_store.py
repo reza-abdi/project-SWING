@@ -42,6 +42,7 @@ def initialize(path: str | Path | None = None) -> None:
                 proposal_id TEXT PRIMARY KEY,
                 grid_id TEXT NOT NULL CHECK (grid_id IN ('39', '118')),
                 snapshot_hash TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL DEFAULT '{}',
                 action_json TEXT NOT NULL,
                 creator TEXT NOT NULL,
                 created_at REAL NOT NULL,
@@ -50,6 +51,9 @@ def initialize(path: str | Path | None = None) -> None:
                 idempotency_key TEXT
             )
         """)
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_proposals)")}
+        if "snapshot_json" not in columns:
+            connection.execute("ALTER TABLE agent_proposals ADD COLUMN snapshot_json TEXT NOT NULL DEFAULT '{}'")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_agent_proposals_expiry ON agent_proposals(expires_at)")
 
 
@@ -74,9 +78,9 @@ def create_pending(grid_id: str, snapshot: dict[str, Any], action: dict[str, Any
     with _connection(path) as connection:
         connection.execute("""
             INSERT INTO agent_proposals
-            (proposal_id, grid_id, snapshot_hash, action_json, creator, created_at, expires_at, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
-        """, (proposal_id, grid_id, digest, json.dumps(action, sort_keys=True, allow_nan=False),
+            (proposal_id, grid_id, snapshot_hash, snapshot_json, action_json, creator, created_at, expires_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        """, (proposal_id, grid_id, digest, json.dumps(snapshot, sort_keys=True, allow_nan=False, default=str), json.dumps(action, sort_keys=True, allow_nan=False),
               str(creator)[:120], created, created + ttl_seconds))
     return get_proposal(proposal_id, now=created, path=path)
 
@@ -96,6 +100,7 @@ def get_proposal(proposal_id: str, *, now: float | None = None, path: str | Path
         return None
     result = dict(row)
     result["action"] = json.loads(result.pop("action_json"))
+    result["snapshot"] = json.loads(result.pop("snapshot_json"))
     return result
 
 

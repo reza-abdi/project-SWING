@@ -116,6 +116,7 @@ def _default_graph_runner(grid: str, payload: dict) -> dict:
             "capacity_max_mw": state.capacity_max,
             "situation": state.current_situation,
             "forecast_bounds": state.forecast_bounds,
+            "topology": TwinClient().topology(grid),
         },
     }
 
@@ -127,6 +128,34 @@ def configure_graph_runner(runner) -> None:
     """Inject a deterministic graph runner for tests and controlled deployments."""
     global _graph_runner
     _graph_runner = runner
+
+
+def _proposal_is_fresh(proposal: dict, twin: TwinClient) -> bool:
+    """Recheck physical state and run read-only validation before an approval can execute."""
+    try:
+        status = twin.grid_status(proposal["grid_id"])
+        topology = twin.topology(proposal["grid_id"])
+        snapshot = proposal["snapshot"]
+        original = snapshot.get("situation", {})
+        observed = {
+            "available": True,
+            "capacity_max_mw": float(status["capacity_max_mw"]),
+            "resilience": status["resilience"],
+            "security": status["security"],
+            "bus_loads": status["bus_loads"],
+        }
+        if snapshot.get("capacity_max_mw") != float(status["capacity_max_mw"]):
+            return False
+        if original != observed or snapshot.get("topology") != topology:
+            return False
+        action = proposal["action"]
+        validated = twin.validate(proposal["grid_id"], {
+            key: action[key] for key in ("action_type", "target_bus", "secondary_bus", "mw_amount")
+            if key in action
+        })
+        return validated.get("valid") is True
+    except Exception:
+        return False
 
 
 @app.post("/propose/{grid}")
