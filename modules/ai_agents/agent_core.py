@@ -96,6 +96,8 @@ class GridState(BaseModel):
     current_situation: dict[str, object] = Field(default_factory=dict)
     forecast_bounds: dict[str, object] = Field(default_factory=dict)
     feature_importance: dict[str, object] = Field(default_factory=dict)
+    forecast_source: Literal["NONE", "TFT", "LIGHTGBM"] = "NONE"
+    forecast_error: str | None = None
     risk_level: Literal["UNKNOWN", "CRITICAL", "HIGH", "MEDIUM", "WATCH", "LOW"] = "UNKNOWN"
     compliance_context: str = ""
     proposed_action: ProposedAction = Field(default_factory=ProposedAction)
@@ -133,6 +135,44 @@ def observer_node(state: GridState, twin_client: TwinClient | None = None) -> di
         "bus_loads": bus_loads,
     }
     return {"current_situation": situation, "capacity_max": float(capacity)}
+
+
+def tft_forecasting_node(
+    state: GridState,
+    forecaster=None,
+    *,
+    trust_checkpoint: bool = False,
+    trust_dataset: bool = False,
+) -> dict[str, object]:
+    """Try trusted historical-proxy TFT inference before single-hour fallback."""
+    if not math.isfinite(state.capacity_max) or state.capacity_max <= 0:
+        return {"forecast_bounds": {}, "forecast_source": "NONE", "forecast_error": "INVALID_BASELINE"}
+    try:
+        if forecaster is None:
+            from modules.forecasting.tft_forecaster import TFTForecaster
+
+            forecaster = TFTForecaster()
+        if forecaster.model is None:
+            forecaster.load_model(trust_checkpoint=trust_checkpoint)
+        dataset = forecaster.training_dataset_params
+        if dataset is None:
+            dataset = forecaster.load_training_dataset_config(trust_dataset=trust_dataset)
+        history = forecaster.build_recent_history_window()
+        raw = forecaster.forecast_multi_horizon(history, dataset)
+        indices = {"1h": 0, "2h": 1, "6h": 5, "24h": 23}
+        bounds = {}
+        for horizon, index in indices.items():
+            for quantile in ("p10", "p50", "p90"):
+                values = raw.get(quantile)
+                if not isinstance(values, (list, tuple)) or len(values) != 24:
+                    raise ValueError("TFT must return 24 hourly values for every quantile")
+                value = float(values[index]) * state.capacity_max
+                if not math.isfinite(value):
+                    raise ValueError("TFT returned a non-finite prediction")
+                bounds[f"{quantile}_{horizon}"] = value
+        return {"forecast_bounds": bounds, "forecast_source": "TFT", "forecast_error": None}
+    except Exception as exc:
+        return {"forecast_bounds": {}, "forecast_source": "NONE", "forecast_error": type(exc).__name__}
 
 
 def retrieve_compliance_context(
