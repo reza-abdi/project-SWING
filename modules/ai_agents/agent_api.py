@@ -245,6 +245,13 @@ async def execute_proposal(grid: str, request: ExecuteRequest, idempotency_key: 
     proposal = proposal_store.get_proposal(request.proposal_id)
     if proposal is None or proposal["grid_id"] != grid:
         raise HTTPException(status_code=404, detail="Proposal not found")
+    if proposal["status"] == "executed" and proposal.get("idempotency_key") == idempotency_key:
+        return {
+            "proposal_id": request.proposal_id,
+            "status": "executed",
+            "result": proposal.get("execution_result"),
+            "replayed": True,
+        }
     if proposal["status"] != "pending":
         raise HTTPException(status_code=409, detail="Proposal is no longer pending")
     twin = TwinClient()
@@ -262,7 +269,7 @@ async def execute_proposal(grid: str, request: ExecuteRequest, idempotency_key: 
         proposal_store.transition(request.proposal_id, "executing", "stale")
         log_event("ai", grid, "PROPOSAL_EXECUTION_FAILED", {"proposal_id": request.proposal_id, "error": type(exc).__name__})
         raise HTTPException(status_code=502, detail="Twin action failed; proposal is consumed") from exc
-    if not proposal_store.transition(request.proposal_id, "executing", "executed"):
+    if not proposal_store.complete_execution(request.proposal_id, result):
         raise HTTPException(status_code=409, detail="Action was sent but proposal state could not be finalized")
     log_event("ai", grid, "PROPOSAL_EXECUTED", {"proposal_id": request.proposal_id, "action": action})
-    return {"proposal_id": request.proposal_id, "status": "executed", "result": result}
+    return {"proposal_id": request.proposal_id, "status": "executed", "result": result, "replayed": False}

@@ -49,12 +49,16 @@ def initialize(path: str | Path | None = None) -> None:
                 expires_at REAL NOT NULL,
                 status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected','expired','executing','executed','stale')),
                 idempotency_key TEXT
+                ,execution_result_json TEXT
             )
         """)
         columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_proposals)")}
         if "snapshot_json" not in columns:
             connection.execute("ALTER TABLE agent_proposals ADD COLUMN snapshot_json TEXT NOT NULL DEFAULT '{}'")
+        if "execution_result_json" not in columns:
+            connection.execute("ALTER TABLE agent_proposals ADD COLUMN execution_result_json TEXT")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_agent_proposals_expiry ON agent_proposals(expires_at)")
+        connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_proposals_idempotency ON agent_proposals(idempotency_key) WHERE idempotency_key IS NOT NULL")
 
 
 def snapshot_digest(snapshot: dict[str, Any]) -> str:
@@ -101,6 +105,8 @@ def get_proposal(proposal_id: str, *, now: float | None = None, path: str | Path
     result = dict(row)
     result["action"] = json.loads(result.pop("action_json"))
     result["snapshot"] = json.loads(result.pop("snapshot_json"))
+    encoded_result = result.pop("execution_result_json")
+    result["execution_result"] = json.loads(encoded_result) if encoded_result else None
     return result
 
 
@@ -117,9 +123,25 @@ def transition(proposal_id: str, expected: str, target: str, *, now: float | Non
                 UPDATE agent_proposals SET status='expired'
                 WHERE proposal_id=? AND status=? AND expires_at<=?
             """, (proposal_id, expected, current))
-        cursor = connection.execute("""
-            UPDATE agent_proposals SET status=?, idempotency_key=COALESCE(?, idempotency_key)
-            WHERE proposal_id=? AND status=? AND (expires_at>? OR status='executing')
-        """, (target, idempotency_key, proposal_id, expected, current))
+        try:
+            cursor = connection.execute("""
+                UPDATE agent_proposals SET status=?, idempotency_key=COALESCE(?, idempotency_key)
+                WHERE proposal_id=? AND status=? AND (expires_at>? OR status='executing')
+            """, (target, idempotency_key, proposal_id, expected, current))
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return False
         connection.commit()
+        return cursor.rowcount == 1
+
+
+def complete_execution(proposal_id: str, result: dict[str, Any], *, path: str | Path | None = None) -> bool:
+    """Atomically mark a claimed proposal executed and persist its idempotent response."""
+    serialized = json.dumps(result, sort_keys=True, allow_nan=False, default=str)
+    initialize(path)
+    with _connection(path) as connection:
+        cursor = connection.execute("""
+            UPDATE agent_proposals SET status='executed', execution_result_json=?
+            WHERE proposal_id=? AND status='executing'
+        """, (serialized, proposal_id))
         return cursor.rowcount == 1
