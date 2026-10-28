@@ -5,7 +5,7 @@ from ipaddress import ip_address
 import math
 import math
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from modules.ai_agents.agent_core import GridState, build_agent_graph
@@ -13,7 +13,7 @@ from modules.ai_agents.twin_client import TwinClient
 from modules.ai_agents.llm_client import generate_with_fallback
 from modules.ai_agents.twin_client import validate_operator_forecast_features
 from modules.ai_agents import proposal_store
-from modules.event_store import log_event
+from modules.event_store import get_events, log_event
 from modules.config import runtime_settings
 
 
@@ -273,3 +273,12 @@ async def execute_proposal(grid: str, request: ExecuteRequest, idempotency_key: 
         raise HTTPException(status_code=409, detail="Action was sent but proposal state could not be finalized")
     log_event("ai", grid, "PROPOSAL_EXECUTED", {"proposal_id": request.proposal_id, "action": action})
     return {"proposal_id": request.proposal_id, "status": "executed", "result": result, "replayed": False}
+
+
+@app.get("/events/{grid}")
+async def events(grid: str, source: str | None = None, limit: int = Query(default=100, ge=1, le=500)) -> dict:
+    if grid not in {"39", "118"}:
+        raise HTTPException(status_code=404, detail="Grid not found")
+    if source is not None and (not source.strip() or len(source) > 64):
+        raise HTTPException(status_code=422, detail="Invalid event source filter")
+    return {"grid_id": grid, "events": await asyncio.to_thread(get_events, grid, source, limit)}
