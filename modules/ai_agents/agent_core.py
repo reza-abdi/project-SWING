@@ -8,7 +8,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from modules.ai_agents.twin_client import TwinClient, TwinClientError
+from modules.ai_agents.twin_client import (
+    TwinClient,
+    TwinClientError,
+    validate_operator_forecast_features,
+)
 
 
 class RAGUnavailableError(RuntimeError):
@@ -92,11 +96,13 @@ class GridState(BaseModel):
 
     grid_id: Literal["39", "118"] = "118"
     telemetry: dict[str, object] = Field(default_factory=dict)
+    telemetry_source: Literal["operator", "historical_proxy", "demo", "unavailable"] = "unavailable"
     capacity_max: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     current_situation: dict[str, object] = Field(default_factory=dict)
     forecast_bounds: dict[str, object] = Field(default_factory=dict)
     feature_importance: dict[str, object] = Field(default_factory=dict)
     forecast_source: Literal["NONE", "TFT", "LIGHTGBM"] = "NONE"
+    forecast_input_source: Literal["operator", "historical_proxy", "demo", "mixed", "unavailable"] = "unavailable"
     forecast_error: str | None = None
     risk_level: Literal["UNKNOWN", "CRITICAL", "HIGH", "MEDIUM", "WATCH", "LOW"] = "UNKNOWN"
     compliance_context: str = ""
@@ -170,22 +176,46 @@ def tft_forecasting_node(
                 if not math.isfinite(value):
                     raise ValueError("TFT returned a non-finite prediction")
                 bounds[f"{quantile}_{horizon}"] = value
-        return {"forecast_bounds": bounds, "forecast_source": "TFT", "forecast_error": None}
+        return {
+            "forecast_bounds": bounds,
+            "forecast_source": "TFT",
+            "forecast_input_source": "historical_proxy",
+            "forecast_error": None,
+        }
     except Exception as exc:
-        return {"forecast_bounds": {}, "forecast_source": "NONE", "forecast_error": type(exc).__name__}
+        return {
+            "forecast_bounds": {},
+            "forecast_source": "NONE",
+            "forecast_input_source": "unavailable",
+            "forecast_error": type(exc).__name__,
+        }
 
 
 def lightgbm_fallback_node(state: GridState, forecaster=None) -> dict[str, object]:
     """Always try LightGBM for next-hour bounds and p50 feature importance."""
     bounds = dict(state.forecast_bounds)
     was_tft = state.forecast_source == "TFT"
+    if state.telemetry_source != "operator":
+        reason = "OPERATOR_FORECAST_FEATURES_REQUIRED"
+        if not was_tft:
+            for horizon in ("1h", "2h", "6h", "24h"):
+                for quantile in ("p10", "p50", "p90"):
+                    bounds[f"{quantile}_{horizon}"] = None
+        return {
+            "forecast_bounds": bounds,
+            "feature_importance": {},
+            "forecast_source": "TFT" if was_tft else "NONE",
+            "forecast_input_source": "historical_proxy" if was_tft else "unavailable",
+            "forecast_error": reason,
+        }
     try:
         if forecaster is None:
             from modules.forecasting.grid_forecaster import GridForecaster
 
             forecaster = GridForecaster()
+        features = validate_operator_forecast_features(state.telemetry)
         forecaster.load_models()
-        one_hour = forecaster.forecast_next_hour(state.telemetry, state.capacity_max)
+        one_hour = forecaster.forecast_next_hour(features, state.capacity_max)
         for quantile in ("p10", "p50", "p90"):
             value = float(one_hour[quantile])
             if not math.isfinite(value):
@@ -196,13 +226,14 @@ def lightgbm_fallback_node(state: GridState, forecaster=None) -> dict[str, objec
                 for quantile in ("p10", "p50", "p90"):
                     bounds[f"{quantile}_{horizon}"] = None
         try:
-            importance = forecaster.explain_prediction(state.telemetry)
+            importance = forecaster.explain_prediction(features)
         except Exception:
             importance = {}
         return {
             "forecast_bounds": bounds,
             "feature_importance": importance,
             "forecast_source": "TFT" if was_tft else "LIGHTGBM",
+            "forecast_input_source": "mixed" if was_tft else "operator",
             "forecast_error": state.forecast_error if was_tft else None,
         }
     except Exception as exc:
@@ -210,6 +241,7 @@ def lightgbm_fallback_node(state: GridState, forecaster=None) -> dict[str, objec
             "forecast_bounds": bounds,
             "feature_importance": {},
             "forecast_source": "TFT" if was_tft else "NONE",
+            "forecast_input_source": "historical_proxy" if was_tft else "unavailable",
             "forecast_error": f"LIGHTGBM_UNAVAILABLE:{type(exc).__name__}",
         }
 

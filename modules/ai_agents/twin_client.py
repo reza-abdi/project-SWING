@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -12,6 +13,26 @@ from modules.config import runtime_settings
 
 class TwinClientError(RuntimeError):
     """The Twin service could not provide a valid response."""
+
+
+FORECAST_FEATURE_FIELDS = (
+    "hour_sin", "hour_cos", "dayofweek", "month", "load_lag_1", "load_lag_2",
+    "load_lag_24", "Northern_Region_Avg_T2M",
+)
+
+
+def validate_operator_forecast_features(payload: dict[str, Any]) -> dict[str, float]:
+    """Accept only a complete operator-supplied feature row, never Twin status."""
+    if not isinstance(payload, dict) or set(payload) != set(FORECAST_FEATURE_FIELDS):
+        missing = sorted(set(FORECAST_FEATURE_FIELDS) - set(payload or {}))
+        raise TwinClientError(f"operator forecast telemetry is incomplete; missing fields: {missing}")
+    result = {}
+    for name in FORECAST_FEATURE_FIELDS:
+        value = payload[name]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise TwinClientError(f"operator forecast feature {name} must be finite numeric data")
+        result[name] = float(value)
+    return result
 
 
 class TwinClient:
