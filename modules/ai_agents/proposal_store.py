@@ -110,6 +110,18 @@ def get_proposal(proposal_id: str, *, now: float | None = None, path: str | Path
     return result
 
 
+def latest_proposal(grid_id: str, *, now: float | None = None, path: str | Path | None = None) -> dict[str, Any] | None:
+    if grid_id not in {"39", "118"}:
+        raise ValueError("grid_id must be '39' or '118'")
+    initialize(path)
+    with _connection(path) as connection:
+        row = connection.execute(
+            "SELECT proposal_id FROM agent_proposals WHERE grid_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (grid_id,),
+        ).fetchone()
+    return get_proposal(row["proposal_id"], now=now, path=path) if row else None
+
+
 def transition(proposal_id: str, expected: str, target: str, *, now: float | None = None,
                idempotency_key: str | None = None, path: str | Path | None = None) -> bool:
     current = time.time() if now is None else float(now)

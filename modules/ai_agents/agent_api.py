@@ -160,6 +160,41 @@ def _proposal_is_fresh(proposal: dict, twin: TwinClient) -> dict | None:
         return None
 
 
+def _build_chat_context(grid: str, twin: TwinClient) -> dict:
+    """Collect a compact, explicitly sourced read-only simulation context."""
+    try:
+        status = twin.grid_status(grid)
+        loads = status.get("bus_loads")
+        top_loads = sorted(loads.items(), key=lambda item: float(item[1]), reverse=True)[:10] if isinstance(loads, dict) else None
+        live = {
+            "availability": "available",
+            "capacity_max_mw": status.get("capacity_max_mw", "unavailable"),
+            "total_demand_mw": status.get("total_demand_mw", "unavailable"),
+            "resilience": status.get("resilience", "unavailable"),
+            "security": status.get("security", "unavailable"),
+            "highest_bus_loads_mw": top_loads if top_loads is not None else "unavailable",
+        }
+    except Exception:
+        live = {"availability": "unavailable"}
+    try:
+        source = twin.contingency(grid)
+        contingency = {
+            "status": source.get("status", "unavailable"),
+            "n_minus_1_secure": source.get("n_minus_1_secure", "unavailable"),
+            "insecure_contingency_count": source.get("insecure_contingency_count", "unavailable"),
+            "age_seconds": source.get("age_seconds", "unavailable"),
+        }
+    except Exception:
+        contingency = {"status": "unavailable"}
+    try:
+        recent = proposal_store.latest_proposal(grid)
+        latest = ({"status": recent["status"], "action": recent["action"], "created_at": recent["created_at"]}
+                  if recent else "unavailable")
+    except Exception:
+        latest = "unavailable"
+    return {"grid": grid, "live_metrics": live, "contingency": contingency, "latest_proposal": latest}
+
+
 @app.post("/propose/{grid}")
 async def propose(grid: str, payload: ProposeRequest) -> dict:
     if grid not in {"39", "118"}:
