@@ -24,6 +24,26 @@ class RAGBuilder:
             )
         return self.pdf_path
 
+    def load_chunks(self):
+        """Load PDF pages and split them into deterministic overlapping chunks."""
+        from langchain_community.document_loaders import PyPDFLoader
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+        pdf = self.require_pdf()
+        pages = PyPDFLoader(str(pdf)).load()
+        if not pages:
+            raise ValueError(f"IEGC PDF contains no readable pages: {pdf}")
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        chunks = splitter.split_documents(pages)
+        for chunk in chunks:
+            page = chunk.metadata.get("page")
+            chunk.metadata["source"] = pdf.name
+            if page is not None:
+                chunk.metadata["page"] = int(page)
+        if not chunks or any(not chunk.page_content.strip() for chunk in chunks):
+            raise ValueError("IEGC PDF produced empty or no text chunks")
+        return chunks
+
 
 def corpus_paths() -> tuple[Path, Path]:
     """Return project-root independent source and output paths."""
