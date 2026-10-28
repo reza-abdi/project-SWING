@@ -465,6 +465,52 @@ def bounded_retry_node(state: GridState) -> dict[str, object]:
     }
 
 
+def build_agent_graph(*, decision_node, sensor_node, compliance_node=None, twin_client: TwinClient | None = None):
+    """Assemble the bounded decision graph from injectable model/RAG integrations."""
+    from langgraph.graph import END, START, StateGraph
+
+    graph = StateGraph(GridState)
+    graph.add_node("observer", lambda state: observer_node(state, twin_client))
+    graph.add_node("sensor", sensor_node)
+    graph.add_node("risk", risk_assessment_node)
+    graph.add_node("watch", watch_operator_node)
+    graph.add_node("baseline", no_action_operator_node)
+    graph.add_node("compliance", compliance_node or (lambda state: {}))
+    graph.add_node("decision", decision_node)
+    graph.add_node("optimizer", lambda state: optimizer_node(state, twin_client))
+    graph.add_node("optimizer_outcome", optimizer_outcome_node)
+    graph.add_node("validator", lambda state: physics_validator_node(state, twin_client))
+    graph.add_node("retry", bounded_retry_node)
+    graph.add_edge(START, "observer")
+    graph.add_edge("observer", "sensor")
+    graph.add_edge("sensor", "risk")
+
+    def route_risk(state: GridState) -> str:
+        if state.risk_level == "WATCH":
+            return "watch"
+        if state.risk_level == "LOW":
+            return "baseline"
+        return "compliance"
+
+    graph.add_conditional_edges("risk", route_risk, {"watch": "watch", "baseline": "baseline", "compliance": "compliance"})
+    graph.add_edge("watch", END)
+    graph.add_edge("baseline", END)
+    graph.add_edge("compliance", "decision")
+    graph.add_edge("decision", "optimizer")
+    graph.add_edge("optimizer", "optimizer_outcome")
+    graph.add_conditional_edges(
+        "optimizer_outcome",
+        lambda state: "validator" if state.optimizer_feasible is True else END,
+        {"validator": "validator", END: END},
+    )
+    graph.add_edge("validator", "retry")
+    graph.add_conditional_edges(
+        "retry", lambda state: "decision" if state.decision == "RETRY" else END,
+        {"decision": "decision", END: END},
+    )
+    return graph.compile()
+
+
 def retrieve_compliance_context(
     question: str,
     vector_store,
