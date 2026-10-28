@@ -70,6 +70,7 @@ def create_pending(grid_id: str, snapshot: dict[str, Any], action: dict[str, Any
     created = time.time() if now is None else float(now)
     proposal_id = str(uuid.uuid4())
     digest = snapshot_digest(snapshot)
+    initialize(path)
     with _connection(path) as connection:
         connection.execute("""
             INSERT INTO agent_proposals
