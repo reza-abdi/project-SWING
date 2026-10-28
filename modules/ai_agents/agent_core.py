@@ -82,6 +82,26 @@ class ValidationResult(BaseModel):
         return self.model_dump(mode="json", exclude_none=False)
 
 
+class GridState(BaseModel):
+    """Typed graph state with isolated per-run mutable containers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    grid_id: Literal["39", "118"] = "118"
+    telemetry: dict[str, object] = Field(default_factory=dict)
+    capacity_max: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
+    current_situation: dict[str, object] = Field(default_factory=dict)
+    forecast_bounds: dict[str, object] = Field(default_factory=dict)
+    feature_importance: dict[str, object] = Field(default_factory=dict)
+    risk_level: Literal["UNKNOWN", "CRITICAL", "HIGH", "MEDIUM", "WATCH", "LOW"] = "UNKNOWN"
+    compliance_context: str = ""
+    proposed_action: ProposedAction = Field(default_factory=ProposedAction)
+    validation_result: ValidationResult = Field(default_factory=ValidationResult)
+    retry_count: int = Field(default=0, ge=0)
+    decision: str = "PENDING"
+    operator_brief: str = ""
+
+
 def retrieve_compliance_context(
     question: str,
     vector_store,
