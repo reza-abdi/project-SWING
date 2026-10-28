@@ -106,6 +106,7 @@ class GridState(BaseModel):
     forecast_source: Literal["NONE", "TFT", "LIGHTGBM"] = "NONE"
     forecast_input_source: Literal["operator", "historical_proxy", "demo", "mixed", "unavailable"] = "unavailable"
     forecast_error: str | None = None
+    optimizer_method: str | None = None
     risk_level: Literal["UNKNOWN", "CRITICAL", "HIGH", "MEDIUM", "WATCH", "LOW"] = "UNKNOWN"
     compliance_context: str = ""
     proposed_action: ProposedAction = Field(default_factory=ProposedAction)
@@ -387,6 +388,38 @@ def build_decision_prompt(state: GridState, *, retry_feedback: str = "") -> str:
         f"Prior validation feedback: {retry_feedback[:1000]!r}.\n"
         "Only propose a candidate for optimizer and physics validation."
     )
+
+
+def optimizer_node(state: GridState, twin_client: TwinClient | None = None) -> dict[str, object]:
+    """Ask the Twin optimizer for a candidate; this node never actuates the grid."""
+    action = state.proposed_action
+    if action.action_type == "NO_ACTION":
+        return {"decision": "NO_ACTION", "proposed_action": action}
+    client = twin_client or TwinClient()
+    request = {
+        "action_type": action.action_type,
+        "target_bus": action.target_bus,
+        "secondary_bus": action.secondary_bus,
+    }
+    try:
+        result = client.optimize(state.grid_id, request)
+    except (TwinClientError, ValueError) as exc:
+        return {"decision": "OPTIMIZATION_UNAVAILABLE", "validation_result": ValidationResult(error=type(exc).__name__)}
+    if result.get("feasible") is not True:
+        return {"decision": "OPTIMIZATION_INFEASIBLE", "validation_result": ValidationResult(error=str(result.get("error") or "No feasible candidate."))}
+    target = result.get("target_bus", action.target_bus)
+    secondary = result.get("secondary_bus", action.secondary_bus)
+    amount = result.get("mw_amount")
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(float(amount)) or amount <= 0:
+        return {"decision": "OPTIMIZATION_INFEASIBLE", "validation_result": ValidationResult(error="Optimizer returned no positive finite MW amount.")}
+    try:
+        candidate = ProposedAction(
+            action_type=result.get("action_type", action.action_type), target_bus=target,
+            secondary_bus=secondary, mw_amount=float(amount), justification=action.justification,
+        )
+    except Exception as exc:
+        return {"decision": "OPTIMIZATION_INFEASIBLE", "validation_result": ValidationResult(error=f"Invalid optimizer candidate: {type(exc).__name__}")}
+    return {"proposed_action": candidate, "decision": "OPTIMIZED", "optimizer_method": result.get("method")}
 
 
 def retrieve_compliance_context(
