@@ -511,6 +511,32 @@ def build_agent_graph(*, decision_node, sensor_node, compliance_node=None, twin_
     return graph.compile()
 
 
+def operator_approval_brief(state: GridState) -> dict[str, object]:
+    """Describe a validated candidate and make the human approval boundary explicit."""
+    action = state.proposed_action
+    if not state.validation_result.valid or action.action_type == "NO_ACTION":
+        return {"operator_brief": "No validated action is available for approval."}
+    target = f"bus {action.target_bus}"
+    if action.secondary_bus is not None:
+        target += f" to bus {action.secondary_bus}"
+    horizons = ", ".join(
+        f"{label}: {state.forecast_bounds[key]} MW"
+        for label, key in (("1h p90", "p90_1h"), ("6h p90", "p90_6h"), ("24h p90", "p90_24h"))
+        if state.forecast_bounds.get(key) is not None
+    ) or "unavailable"
+    drivers = ", ".join(str(key) for key in list(state.feature_importance)[:5]) or "unavailable"
+    validation = state.validation_result
+    return {
+        "decision": "PENDING_OPERATOR_APPROVAL",
+        "operator_brief": (
+            f"Proposed {action.action_type} at {target} for {action.mw_amount:g} MW. "
+            f"Forecast source: {state.forecast_source}; forecast bounds: {horizons}. "
+            f"Leading model drivers: {drivers}. Predicted GRI: {validation.gri_after}. "
+            "Physics validation passed. Operator approval is required before any execution."
+        ),
+    }
+
+
 def retrieve_compliance_context(
     question: str,
     vector_store,
