@@ -1,11 +1,35 @@
 """Independent HTTP service for AI-assisted, human-approved grid proposals."""
 
 import asyncio
+import math
+
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from modules.ai_agents.agent_core import GridState, build_agent_graph
 from modules.ai_agents.twin_client import TwinClient
 from modules.ai_agents.llm_client import generate_with_fallback
+from modules.ai_agents.twin_client import validate_operator_forecast_features
+
+
+class ProposeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    telemetry: dict[str, object] = Field(default_factory=dict)
+    capacity_max_mw: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+    @field_validator("telemetry")
+    @classmethod
+    def validate_telemetry(cls, value: dict[str, object]) -> dict[str, object]:
+        if value:
+            validate_operator_forecast_features(value)
+        return dict(value)
+
+    @model_validator(mode="after")
+    def validate_capacity(self) -> "ProposeRequest":
+        if self.capacity_max_mw is not None and (not math.isfinite(self.capacity_max_mw) or self.capacity_max_mw <= 0):
+            raise ValueError("capacity_max_mw must be finite and positive")
+        return self
 
 
 app = FastAPI(title="Project SWING Decision Support", version="1.0.0")
@@ -32,7 +56,7 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "twin": twin_status}
 
 
-def _default_graph_runner(grid: str, telemetry: dict) -> dict:
+def _default_graph_runner(grid: str, payload: dict) -> dict:
     """Run the isolated proposal graph with lazy, fail-closed model integrations."""
     from modules.ai_agents.agent_core import (
         ProposedAction, agent_unavailable_node, build_decision_prompt,
@@ -62,8 +86,9 @@ def _default_graph_runner(grid: str, telemetry: dict) -> dict:
     )
     result = graph.invoke(GridState(
         grid_id=grid,
-        telemetry=dict(telemetry),
-        telemetry_source="operator" if telemetry else "unavailable",
+        telemetry=dict(payload.get("telemetry", {})),
+        telemetry_source="operator" if payload.get("telemetry") else "unavailable",
+        capacity_max=float(payload["capacity_max_mw"]) if payload.get("capacity_max_mw") is not None else 0.0,
     ))
     state = result if isinstance(result, GridState) else GridState.model_validate(result)
     if state.validation_result.valid:
@@ -97,12 +122,11 @@ def configure_graph_runner(runner) -> None:
 
 
 @app.post("/propose/{grid}")
-async def propose(grid: str, payload: dict) -> dict:
+async def propose(grid: str, payload: ProposeRequest) -> dict:
     if grid not in {"39", "118"}:
         raise HTTPException(status_code=404, detail="Grid not found")
-    telemetry = payload.get("telemetry", {})
     try:
-        return await asyncio.to_thread(_graph_runner, grid, telemetry)
+        return await asyncio.to_thread(_graph_runner, grid, payload.model_dump())
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="Invalid proposal input") from exc
     except Exception as exc:
