@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import math
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -111,6 +113,32 @@ class GridState(BaseModel):
     retry_count: int = Field(default=0, ge=0)
     decision: str = "PENDING"
     operator_brief: str = ""
+
+
+def parse_decision_response(response: str, *, valid_bus_ids: set[int] | None = None) -> ProposedAction:
+    """Parse one strict action object; model text is untrusted input."""
+    if not isinstance(response, str) or not response.strip():
+        raise ValueError("model response is empty")
+    text = response.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        text = fenced.group(1)
+    try:
+        payload = json.loads(text)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("model response must be a JSON object") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("model response must be a JSON object")
+    allowed = {"action_type", "target_bus", "secondary_bus", "mw_amount", "justification"}
+    if set(payload) - allowed or not {"action_type", "justification"}.issubset(payload):
+        raise ValueError("model response has missing or unsupported fields")
+    for key in ("target_bus", "secondary_bus"):
+        bus = payload.get(key)
+        if bus is not None and (isinstance(bus, bool) or not isinstance(bus, int)):
+            raise ValueError(f"{key} must be an integer bus identifier")
+        if bus is not None and valid_bus_ids is not None and bus not in valid_bus_ids:
+            raise ValueError(f"{key} is not present in the live grid")
+    return ProposedAction.model_validate(payload)
 
 
 def observer_node(state: GridState, twin_client: TwinClient | None = None) -> dict[str, object]:
