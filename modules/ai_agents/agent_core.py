@@ -301,6 +301,27 @@ def watch_operator_node(state: GridState) -> dict[str, object]:
     }
 
 
+def no_action_operator_node(state: GridState) -> dict[str, object]:
+    """Recommend the baseline only when live observations and forecasts are safe."""
+    if state.risk_level == "UNKNOWN" or not state.current_situation.get("available"):
+        return {
+            "decision": "DATA_UNAVAILABLE",
+            "operator_brief": "Current grid status is unavailable; safety cannot be assessed.",
+            "proposed_action": ProposedAction(action_type="NO_ACTION"),
+        }
+    if state.risk_level != "LOW":
+        return {
+            "decision": "ROUTE_MISMATCH",
+            "operator_brief": "Baseline recommendation requires a LOW risk assessment.",
+            "proposed_action": ProposedAction(action_type="NO_ACTION"),
+        }
+    return {
+        "decision": "MAINTAIN_BASELINE",
+        "operator_brief": "Available live status and forecasts indicate low risk; maintain the current baseline.",
+        "proposed_action": ProposedAction(action_type="NO_ACTION"),
+    }
+
+
 def retrieve_compliance_context(
     question: str,
     vector_store,
