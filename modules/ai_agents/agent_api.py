@@ -1,10 +1,11 @@
 """Independent HTTP service for AI-assisted, human-approved grid proposals."""
 
 import asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from modules.ai_agents.agent_core import GridState, build_agent_graph
 from modules.ai_agents.twin_client import TwinClient
+from modules.ai_agents.llm_client import generate_with_fallback
 
 
 app = FastAPI(title="Project SWING Decision Support", version="1.0.0")
@@ -29,3 +30,80 @@ async def health() -> dict[str, str]:
     except Exception:
         twin_status = "unavailable"
     return {"status": "ok", "twin": twin_status}
+
+
+def _default_graph_runner(grid: str, telemetry: dict) -> dict:
+    """Run the isolated proposal graph with lazy, fail-closed model integrations."""
+    from modules.ai_agents.agent_core import (
+        ProposedAction, agent_unavailable_node, build_decision_prompt,
+        lightgbm_fallback_node, operator_approval_brief, parse_decision_response,
+        tft_forecasting_node,
+    )
+
+    def sensor(state):
+        prediction = tft_forecasting_node(state)
+        interim = state.model_copy(update=prediction)
+        fallback = lightgbm_fallback_node(interim)
+        return {**prediction, **fallback}
+
+    def decide(state):
+        try:
+            text = generate_with_fallback(build_decision_prompt(state))
+            bus_ids = {int(bus) for bus in state.current_situation.get("bus_loads", {}) if str(bus).isdigit()}
+            action = parse_decision_response(text, valid_bus_ids=bus_ids)
+            return {"proposed_action": action}
+        except Exception as exc:
+            return agent_unavailable_node(exc)
+
+    graph = build_agent_graph(
+        sensor_node=sensor,
+        decision_node=decide,
+        twin_client=TwinClient(),
+    )
+    result = graph.invoke(GridState(
+        grid_id=grid,
+        telemetry=dict(telemetry),
+        telemetry_source="operator" if telemetry else "unavailable",
+    ))
+    state = result if isinstance(result, GridState) else GridState.model_validate(result)
+    if state.validation_result.valid:
+        brief = operator_approval_brief(state)
+        state = state.model_copy(update=brief)
+    else:
+        from modules.ai_agents.agent_core import agent_failure_brief
+        state = state.model_copy(update=agent_failure_brief(state))
+    return {
+        "decision": state.decision,
+        "operator_brief": state.operator_brief,
+        "proposed_action": state.proposed_action.model_dump(mode="json"),
+        "validation": state.validation_result.as_response(),
+        "feature_importance": state.feature_importance,
+        "forecast": {
+            "source": state.forecast_source,
+            "input_source": state.forecast_input_source,
+            "bounds": state.forecast_bounds,
+            "risk_level": state.risk_level,
+        },
+    }
+
+
+_graph_runner = _default_graph_runner
+
+
+def configure_graph_runner(runner) -> None:
+    """Inject a deterministic graph runner for tests and controlled deployments."""
+    global _graph_runner
+    _graph_runner = runner
+
+
+@app.post("/propose/{grid}")
+async def propose(grid: str, payload: dict) -> dict:
+    if grid not in {"39", "118"}:
+        raise HTTPException(status_code=404, detail="Grid not found")
+    telemetry = payload.get("telemetry", {})
+    try:
+        return await asyncio.to_thread(_graph_runner, grid, telemetry)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid proposal input") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Decision support is unavailable") from exc

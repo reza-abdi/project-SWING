@@ -488,7 +488,7 @@ def build_agent_graph(*, decision_node, sensor_node, compliance_node=None, twin_
     def route_risk(state: GridState) -> str:
         if state.risk_level == "WATCH":
             return "watch"
-        if state.risk_level == "LOW":
+        if state.risk_level in {"LOW", "UNKNOWN"}:
             return "baseline"
         return "compliance"
 
@@ -496,7 +496,11 @@ def build_agent_graph(*, decision_node, sensor_node, compliance_node=None, twin_
     graph.add_edge("watch", END)
     graph.add_edge("baseline", END)
     graph.add_edge("compliance", "decision")
-    graph.add_edge("decision", "optimizer")
+    graph.add_conditional_edges(
+        "decision",
+        lambda state: "end" if state.decision == "AGENT_UNAVAILABLE" or state.proposed_action.action_type == "NO_ACTION" else "optimizer",
+        {"end": END, "optimizer": "optimizer"},
+    )
     graph.add_edge("optimizer", "optimizer_outcome")
     graph.add_conditional_edges(
         "optimizer_outcome",
