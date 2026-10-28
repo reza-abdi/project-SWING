@@ -246,6 +246,18 @@ def lightgbm_fallback_node(state: GridState, forecaster=None) -> dict[str, objec
         }
 
 
+def risk_assessment_node(state: GridState) -> dict[str, object]:
+    """Elevate an already-collapsed live Twin state above forecasts."""
+    situation = state.current_situation
+    if not situation.get("available"):
+        return {"risk_level": "UNKNOWN"}
+    resilience = situation.get("resilience") or {}
+    security = situation.get("security") or {}
+    if resilience.get("collapsed") or security.get("collapsed"):
+        return {"risk_level": "CRITICAL"}
+    return {"risk_level": state.risk_level}
+
+
 def retrieve_compliance_context(
     question: str,
     vector_store,
