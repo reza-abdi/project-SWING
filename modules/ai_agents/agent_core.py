@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from modules.ai_agents.twin_client import TwinClient, TwinClientError
 
 
 class RAGUnavailableError(RuntimeError):
@@ -100,6 +103,36 @@ class GridState(BaseModel):
     retry_count: int = Field(default=0, ge=0)
     decision: str = "PENDING"
     operator_brief: str = ""
+
+
+def observer_node(state: GridState, twin_client: TwinClient | None = None) -> dict[str, object]:
+    """Read current status from the Twin API and fail closed on missing fields."""
+    client = twin_client or TwinClient()
+    try:
+        status = client.grid_status(state.grid_id)
+    except (TwinClientError, ValueError) as exc:
+        return {"current_situation": {"available": False, "error": type(exc).__name__}, "capacity_max": 0.0}
+    capacity = status.get("capacity_max_mw")
+    resilience = status.get("resilience")
+    security = status.get("security")
+    bus_loads = status.get("bus_loads")
+    if (
+        not isinstance(capacity, (int, float))
+        or not math.isfinite(float(capacity))
+        or capacity <= 0
+        or not isinstance(resilience, dict)
+        or not isinstance(security, dict)
+        or not isinstance(bus_loads, dict)
+    ):
+        return {"current_situation": {"available": False, "error": "INCOMPLETE_TWIN_STATUS"}, "capacity_max": 0.0}
+    situation = {
+        "available": True,
+        "capacity_max_mw": float(capacity),
+        "resilience": resilience,
+        "security": security,
+        "bus_loads": bus_loads,
+    }
+    return {"current_situation": situation, "capacity_max": float(capacity)}
 
 
 def retrieve_compliance_context(
