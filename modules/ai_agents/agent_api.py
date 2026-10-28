@@ -3,6 +3,7 @@
 import asyncio
 from ipaddress import ip_address
 import math
+import math
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -212,6 +213,30 @@ def _require_local_operator() -> None:
         raise HTTPException(status_code=503, detail="Verified operator identity is required for remote execution")
 
 
+def _execute_action(twin: TwinClient, grid: str, action: dict, fresh_status: dict) -> dict:
+    """Map each approved action to its one exact Twin actuation route."""
+    amount = action.get("mw_amount")
+    bus = action.get("target_bus")
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(float(amount)) or amount <= 0:
+        raise ValueError("approved action must have positive finite MW")
+    if isinstance(bus, bool) or not isinstance(bus, int):
+        raise ValueError("approved action must have an integer target bus")
+    action_type = action.get("action_type")
+    if action_type == "SHED_LOAD":
+        current_load = fresh_status.get("bus_loads", {}).get(str(bus))
+        if isinstance(current_load, bool) or not isinstance(current_load, (int, float)) or not math.isfinite(float(current_load)):
+            raise ValueError("fresh load at target bus is unavailable")
+        return twin.change_load(grid, bus, max(0.0, float(current_load) - float(amount)))
+    if action_type == "REDISPATCH_GEN":
+        return twin.redispatch_gen(grid, bus, float(amount))
+    if action_type == "LOAD_REDISTRIBUTION":
+        secondary = action.get("secondary_bus")
+        if isinstance(secondary, bool) or not isinstance(secondary, int) or secondary == bus:
+            raise ValueError("redistribution requires a distinct integer destination bus")
+        return twin.redistribute_load(grid, bus, secondary, float(amount))
+    raise ValueError("Only validated active actions can be executed")
+
+
 @app.post("/execute/{grid}")
 async def execute_proposal(grid: str, request: ExecuteRequest, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128)) -> dict:
     if grid not in {"39", "118"}:
@@ -232,17 +257,7 @@ async def execute_proposal(grid: str, request: ExecuteRequest, idempotency_key: 
         raise HTTPException(status_code=409, detail="Proposal has already been handled")
     action = proposal["action"]
     try:
-        amount = float(action["mw_amount"])
-        bus = int(action["target_bus"])
-        if action["action_type"] == "SHED_LOAD":
-            current_load = float(fresh_status["bus_loads"][str(bus)])
-            result = await asyncio.to_thread(twin.change_load, grid, bus, max(0.0, current_load - amount))
-        elif action["action_type"] == "REDISPATCH_GEN":
-            result = await asyncio.to_thread(twin.redispatch_gen, grid, bus, amount)
-        elif action["action_type"] == "LOAD_REDISTRIBUTION":
-            result = await asyncio.to_thread(twin.redistribute_load, grid, bus, int(action["secondary_bus"]), amount)
-        else:
-            raise ValueError("Only validated active actions can be executed")
+        result = await asyncio.to_thread(_execute_action, twin, grid, action, fresh_status)
     except Exception as exc:
         proposal_store.transition(request.proposal_id, "executing", "stale")
         log_event("ai", grid, "PROPOSAL_EXECUTION_FAILED", {"proposal_id": request.proposal_id, "error": type(exc).__name__})
