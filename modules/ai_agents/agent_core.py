@@ -64,6 +64,23 @@ class ValidationResult(BaseModel):
     gri_improvement: float | None = Field(default=None, allow_inf_nan=False)
     error: str | None = Field(default=None, max_length=500)
 
+    @model_validator(mode="after")
+    def validate_measurements(self) -> "ValidationResult":
+        if self.valid and self.error:
+            raise ValueError("a valid result cannot include an error")
+        if (
+            self.gri_improvement is not None
+            and self.gri_before is not None
+            and self.gri_after is not None
+            and abs(self.gri_improvement - (self.gri_after - self.gri_before)) > 1e-6
+        ):
+            raise ValueError("gri_improvement must equal gri_after minus gri_before")
+        return self
+
+    def as_response(self) -> dict[str, object]:
+        """Serialize with nullable measurements always present in the contract."""
+        return self.model_dump(mode="json", exclude_none=False)
+
 
 def retrieve_compliance_context(
     question: str,
