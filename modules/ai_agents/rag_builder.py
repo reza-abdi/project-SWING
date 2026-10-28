@@ -6,6 +6,8 @@ from pathlib import Path
 
 from modules.config import runtime_paths
 
+EMBEDDING_MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
+
 
 class RAGBuilder:
     """Resolve the source PDF and persistent index under configured paths."""
@@ -43,6 +45,17 @@ class RAGBuilder:
         if not chunks or any(not chunk.page_content.strip() for chunk in chunks):
             raise ValueError("IEGC PDF produced empty or no text chunks")
         return chunks
+
+    @staticmethod
+    def create_embeddings():
+        """Create the shared, CPU-safe embedding model used by indexing and search."""
+        from langchain_community.embeddings import HuggingFaceEmbeddings
+
+        return HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL_ID,
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True},
+        )
 
 
 def corpus_paths() -> tuple[Path, Path]:
