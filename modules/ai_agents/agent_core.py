@@ -451,6 +451,20 @@ def physics_validator_node(state: GridState, twin_client: TwinClient | None = No
     return {"validation_result": result}
 
 
+def bounded_retry_node(state: GridState) -> dict[str, object]:
+    """Request at most two additional decision attempts after failed validation."""
+    if state.validation_result.valid:
+        return {"decision": "VALIDATED"}
+    if state.retry_count < 2:
+        feedback = state.validation_result.error or "Physics validation failed without details."
+        return {"retry_count": state.retry_count + 1, "decision": "RETRY", "operator_brief": feedback}
+    return {
+        "decision": "VALIDATION_EXHAUSTED",
+        "operator_brief": "Two retries were exhausted without a validated action; request human assessment.",
+        "proposed_action": ProposedAction(action_type="NO_ACTION"),
+    }
+
+
 def retrieve_compliance_context(
     question: str,
     vector_store,
