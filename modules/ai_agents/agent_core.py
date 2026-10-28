@@ -175,6 +175,45 @@ def tft_forecasting_node(
         return {"forecast_bounds": {}, "forecast_source": "NONE", "forecast_error": type(exc).__name__}
 
 
+def lightgbm_fallback_node(state: GridState, forecaster=None) -> dict[str, object]:
+    """Always try LightGBM for next-hour bounds and p50 feature importance."""
+    bounds = dict(state.forecast_bounds)
+    was_tft = state.forecast_source == "TFT"
+    try:
+        if forecaster is None:
+            from modules.forecasting.grid_forecaster import GridForecaster
+
+            forecaster = GridForecaster()
+        forecaster.load_models()
+        one_hour = forecaster.forecast_next_hour(state.telemetry, state.capacity_max)
+        for quantile in ("p10", "p50", "p90"):
+            value = float(one_hour[quantile])
+            if not math.isfinite(value):
+                raise ValueError("LightGBM returned a non-finite prediction")
+            bounds[f"{quantile}_1h"] = value
+        if not was_tft:
+            for horizon in ("2h", "6h", "24h"):
+                for quantile in ("p10", "p50", "p90"):
+                    bounds[f"{quantile}_{horizon}"] = None
+        try:
+            importance = forecaster.explain_prediction(state.telemetry)
+        except Exception:
+            importance = {}
+        return {
+            "forecast_bounds": bounds,
+            "feature_importance": importance,
+            "forecast_source": "TFT" if was_tft else "LIGHTGBM",
+            "forecast_error": state.forecast_error if was_tft else None,
+        }
+    except Exception as exc:
+        return {
+            "forecast_bounds": bounds,
+            "feature_importance": {},
+            "forecast_source": "TFT" if was_tft else "NONE",
+            "forecast_error": f"LIGHTGBM_UNAVAILABLE:{type(exc).__name__}",
+        }
+
+
 def retrieve_compliance_context(
     question: str,
     vector_store,
