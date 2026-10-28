@@ -9,6 +9,10 @@ from typing import Callable, Iterable
 class LLMUnavailableError(RuntimeError):
     """No configured model completed a request."""
 
+    def __init__(self, message: str, *, rate_limited: bool = False) -> None:
+        super().__init__(message)
+        self.rate_limited = rate_limited
+
 
 def configured_models(environ=None) -> tuple[str, ...]:
     env = os.environ if environ is None else environ
@@ -41,6 +45,7 @@ def generate_with_fallback(prompt: str, *, models: Iterable[str] | None = None,
             return str(response.content)
 
     failures = []
+    rate_limited = False
     for model in candidates:
         try:
             response = invoke(model, prompt)
@@ -48,5 +53,7 @@ def generate_with_fallback(prompt: str, *, models: Iterable[str] | None = None,
                 raise ValueError("model returned an empty response")
             return response
         except Exception as exc:  # Provider failures vary by SDK and quota class.
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            rate_limited = rate_limited or status == 429 or getattr(exc, "status_code", None) == 429
             failures.append(f"{model}:{type(exc).__name__}")
-    raise LLMUnavailableError("All configured models failed (" + ", ".join(failures) + ")")
+    raise LLMUnavailableError("All configured models failed", rate_limited=rate_limited)
