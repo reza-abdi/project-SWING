@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 import tempfile
 
@@ -85,6 +86,9 @@ class RAGBuilder:
         with tempfile.TemporaryDirectory(prefix="rag-index-", dir=self.index_dir.parent) as work_dir:
             staged_index = Path(work_dir) / "index"
             vector_store.save_local(str(staged_index))
+            staged_index.chmod(0o700)
+            for artifact in (staged_index / "index.faiss", staged_index / "index.pkl"):
+                artifact.chmod(0o600)
             manifest = {
                 "source_pdf": pdf.name,
                 "source_sha256": pdf_sha256,
@@ -106,7 +110,36 @@ class RAGBuilder:
                 if had_previous:
                     os.replace(backup, self.index_dir)
                 raise
-        return manifest
+        return {**manifest, "manifest_sha256": self._hash_file(self.index_dir / "manifest.json")}
+
+    def load_index(self, embeddings, *, trusted_manifest_sha256: str | None = None):
+        """Load only an explicitly hash-pinned index from a private directory."""
+        if trusted_manifest_sha256 is None:
+            raise PermissionError("FAISS pickle loading requires an externally pinned manifest hash")
+        manifest_path = self.index_dir / "manifest.json"
+        faiss_path = self.index_dir / "index.faiss"
+        pickle_path = self.index_dir / "index.pkl"
+        if not all(path.is_file() for path in (manifest_path, faiss_path, pickle_path)):
+            raise FileNotFoundError("FAISS index is incomplete; rebuild it from the verified regulatory PDF")
+        if stat.S_IMODE(self.index_dir.stat().st_mode) & 0o077:
+            raise PermissionError("FAISS index directory must not be accessible by group or other users")
+        manifest_digest = self._hash_file(manifest_path)
+        if manifest_digest != trusted_manifest_sha256:
+            raise ValueError("FAISS manifest hash mismatch; refusing to deserialize index pickle")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        expected = {
+            "source_sha256": IEGC_PDF_SHA256,
+            "embedding_model": EMBEDDING_MODEL_ID,
+            "index_faiss_sha256": self._hash_file(faiss_path),
+            "index_pickle_sha256": self._hash_file(pickle_path),
+        }
+        if any(manifest.get(key) != value for key, value in expected.items()):
+            raise ValueError("FAISS artifacts do not match their trusted manifest")
+        from langchain_community.vectorstores import FAISS
+
+        return FAISS.load_local(
+            str(self.index_dir), embeddings, allow_dangerous_deserialization=True
+        )
 
 
 def corpus_paths() -> tuple[Path, Path]:
