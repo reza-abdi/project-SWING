@@ -10,6 +10,9 @@ from modules.ai_agents.agent_core import GridState, build_agent_graph
 from modules.ai_agents.twin_client import TwinClient
 from modules.ai_agents.llm_client import generate_with_fallback
 from modules.ai_agents.twin_client import validate_operator_forecast_features
+from modules.ai_agents import proposal_store
+from modules.event_store import log_event
+from modules.config import runtime_settings
 
 
 class ProposeRequest(BaseModel):
@@ -109,6 +112,11 @@ def _default_graph_runner(grid: str, payload: dict) -> dict:
             "bounds": state.forecast_bounds,
             "risk_level": state.risk_level,
         },
+        "snapshot": {
+            "capacity_max_mw": state.capacity_max,
+            "situation": state.current_situation,
+            "forecast_bounds": state.forecast_bounds,
+        },
     }
 
 
@@ -126,8 +134,33 @@ async def propose(grid: str, payload: ProposeRequest) -> dict:
     if grid not in {"39", "118"}:
         raise HTTPException(status_code=404, detail="Grid not found")
     try:
-        return await asyncio.to_thread(_graph_runner, grid, payload.model_dump())
+        result = await asyncio.to_thread(_graph_runner, grid, payload.model_dump())
+        if result.get("decision") == "PENDING_OPERATOR_APPROVAL" and result.get("validation", {}).get("valid"):
+            metadata = proposal_store.create_pending(
+                grid,
+                result.get("snapshot", {}),
+                result["proposed_action"],
+                creator="local",
+                ttl_seconds=runtime_settings().proposal_ttl_seconds,
+            )
+            result["proposal_id"] = metadata["proposal_id"]
+            result["expires_at"] = metadata["expires_at"]
+        result.pop("snapshot", None)
+        return result
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="Invalid proposal input") from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Decision support is unavailable") from exc
+
+
+@app.post("/reject/{grid}/{proposal_id}")
+async def reject_proposal(grid: str, proposal_id: str) -> dict[str, str]:
+    if grid not in {"39", "118"}:
+        raise HTTPException(status_code=404, detail="Grid not found")
+    proposal = proposal_store.get_proposal(proposal_id)
+    if proposal is None or proposal["grid_id"] != grid:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    if not proposal_store.transition(proposal_id, "pending", "rejected"):
+        raise HTTPException(status_code=409, detail="Proposal is no longer pending")
+    log_event("ai", grid, "PROPOSAL_REJECTED", {"proposal_id": proposal_id})
+    return {"proposal_id": proposal_id, "status": "rejected"}
