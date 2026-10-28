@@ -537,6 +537,21 @@ def operator_approval_brief(state: GridState) -> dict[str, object]:
     }
 
 
+def agent_failure_brief(state: GridState) -> dict[str, object]:
+    """Render explicit unavailable/exhausted/monitor/baseline outcomes without inferred success."""
+    messages = {
+        "AGENT_UNAVAILABLE": "Decision support is unavailable. No action was proposed; request human assessment.",
+        "VALIDATION_EXHAUSTED": "Validation retries were exhausted. No action was approved; request human assessment.",
+        "MONITOR": state.operator_brief or "Monitor the grid; no action was proposed.",
+        "MAINTAIN_BASELINE": state.operator_brief or "Maintain the current baseline based on available low-risk observations.",
+        "DATA_UNAVAILABLE": "Grid status is unavailable. Safety could not be assessed; request human assessment.",
+    }
+    message = messages.get(state.decision)
+    if message is None:
+        message = "No approved outcome is available; request human assessment."
+    return {"operator_brief": message, "proposed_action": ProposedAction(action_type="NO_ACTION")}
+
+
 def retrieve_compliance_context(
     question: str,
     vector_store,
