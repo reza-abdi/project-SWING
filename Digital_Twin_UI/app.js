@@ -3,6 +3,23 @@ const GRID_ID = window.GRID_ID;
 const API_URL = "http://127.0.0.1:8001";
 let cy = null;
 
+const LOAD_ICONS = [
+  'icons/factory.png', 'icons/home.png', 'icons/sky-scrappers.png',
+  'icons/school.png', 'icons/college.png', 'icons/gas-station.png',
+  'icons/hospital.png', 'icons/museum.png', 'icons/office.png',
+  'icons/banks.png', 'icons/post-office.png', 'icons/shop.png',
+  'icons/shopping-mall.png',
+];
+
+function iconForNode(nodeType) {
+  if (nodeType === 'GENERATOR') return 'icons/power-plant.png';
+  if (nodeType === 'TRANSFORMER') return 'icons/transformer.png';
+  if (nodeType === 'LOAD') {
+    return LOAD_ICONS[Math.floor(Math.random() * LOAD_ICONS.length)];
+  }
+  return 'icons/transformer.png';
+}
+
 async function loadTopology() {
   if (!['39', '118'].includes(String(GRID_ID))) {
     throw new Error('Unsupported grid selection');
@@ -16,15 +33,22 @@ async function loadTopology() {
   if (!topology || !Array.isArray(topology.nodes) || !Array.isArray(topology.edges)) {
     throw new Error('Topology response is incomplete');
   }
+  const nodesWithIcons = topology.nodes.map((node) => ({
+    ...node,
+    data: { ...node.data, image: iconForNode(node.data?.node_type) },
+  }));
 
   cy = window.cytoscape({
     container: document.getElementById('cy'),
-    elements: [...topology.nodes, ...topology.edges],
+    elements: [...nodesWithIcons, ...topology.edges],
     layout: { name: 'cose', animate: false },
     style: [
       {
         selector: 'node',
         style: {
+          'background-image': 'data(image)',
+          'background-fit': 'cover',
+          'background-color': 'transparent',
           label: 'data(label)',
           'background-color': '#334155',
           color: '#ffffff',
