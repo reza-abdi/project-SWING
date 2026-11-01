@@ -2,6 +2,7 @@
 const GRID_ID = window.GRID_ID;
 const API_URL = "http://127.0.0.1:8001";
 let cy = null;
+let latestGridState = null;
 
 const LOAD_ICONS = [
   'icons/factory.png', 'icons/home.png', 'icons/sky-scrappers.png',
@@ -80,7 +81,70 @@ async function loadTopology() {
       },
     ],
   });
+  installHoverTooltips();
   return cy;
+}
+
+function metricById(collection, id) {
+  if (Array.isArray(collection)) {
+    return collection.find((item) => item && String(item.id) === String(id)) || {};
+  }
+  if (collection && typeof collection === 'object') return collection[String(id)] || {};
+  return {};
+}
+
+function formatMetric(value, decimals) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value.toFixed(decimals)
+    : 'Unavailable';
+}
+
+function showTooltip(lines, event) {
+  const tooltip = document.getElementById('line-tooltip');
+  if (!tooltip) return;
+  tooltip.textContent = lines.join('\n');
+  tooltip.style.whiteSpace = 'pre-line';
+  tooltip.style.left = `${event.pageX}px`;
+  tooltip.style.top = `${event.pageY}px`;
+  tooltip.classList.remove('hidden');
+}
+
+function installHoverTooltips() {
+  const tooltip = document.getElementById('line-tooltip');
+  if (!tooltip || !cy) return;
+  cy.on('mouseover', 'edge', (event) => {
+    const edge = event.target;
+    const lineId = edge.id().replace(/^line/, '');
+    const line = metricById(latestGridState?.lines, lineId);
+    const currentValues = [line.i_from_ka, line.i_to_ka].filter(
+      (value) => typeof value === 'number' && Number.isFinite(value),
+    );
+    const current = currentValues.length ? Math.max(...currentValues) : null;
+    showTooltip([
+      `Line ${lineId}`,
+      `Loading: ${formatMetric(line.loading_percent, 1)}%`,
+      `Current: ${formatMetric(current, 2)} kA`,
+      `Power factor: ${formatMetric(line.pf, 3)}`,
+    ], event.originalEvent);
+  });
+  cy.on('mouseover', 'node', (event) => {
+    const node = event.target;
+    const busId = node.id();
+    const bus = metricById(latestGridState?.buses, busId);
+    const loads = latestGridState?.bus_loads;
+    const load = loads && Object.prototype.hasOwnProperty.call(loads, busId) ? loads[busId] : null;
+    showTooltip([
+      `Bus ${busId}`,
+      `Voltage: ${formatMetric(bus.vm_pu, 3)} p.u.`,
+      `Angle: ${formatMetric(bus.va_degree, 1)}°`,
+      `Live load: ${formatMetric(load, 2)} MW`,
+    ], event.originalEvent);
+  });
+  cy.on('mousemove', 'edge, node', (event) => {
+    tooltip.style.left = `${event.originalEvent.pageX}px`;
+    tooltip.style.top = `${event.originalEvent.pageY}px`;
+  });
+  cy.on('mouseout', 'edge, node', () => tooltip.classList.add('hidden'));
 }
 
 function applyLineClasses(telemetry, contingency) {
