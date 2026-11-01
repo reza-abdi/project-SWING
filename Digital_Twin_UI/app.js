@@ -66,9 +66,42 @@ async function loadTopology() {
           'curve-style': 'bezier',
         },
       },
+      {
+        selector: 'edge.overloaded',
+        style: { 'line-color': '#e74c3c', width: 5, 'shadow-blur': 15, 'shadow-color': '#e74c3c', 'shadow-opacity': 0.9 },
+      },
+      {
+        selector: 'edge.contingency-risk',
+        style: { 'line-color': '#f39c12', width: 4, 'line-style': 'dashed', 'shadow-blur': 10, 'shadow-color': '#f39c12', 'shadow-opacity': 0.7 },
+      },
+      {
+        selector: 'edge.line-tripped',
+        style: { 'line-color': '#475569', 'line-style': 'dotted', opacity: 0.3, 'shadow-blur': 0 },
+      },
     ],
   });
   return cy;
+}
+
+function applyLineClasses(telemetry, contingency) {
+  if (!cy || !Array.isArray(telemetry?.lines)) return;
+  const lineMetrics = new Map(telemetry.lines
+    .filter((line) => line && Number.isInteger(Number(line.id)))
+    .map((line) => [String(line.id), line]));
+  const contingencyLines = contingency?.lines && typeof contingency.lines === 'object'
+    ? contingency.lines : {};
+  cy.edges().forEach((edge) => {
+    const lineId = edge.id().replace(/^line/, '');
+    const measured = lineMetrics.get(lineId);
+    const loading = measured?.loading_percent;
+    const tripped = edge.data('tripped') === true || measured?.in_service === false;
+    const overloaded = typeof loading === 'number' && Number.isFinite(loading) && loading > 100;
+    const insecure = contingencyLines[lineId]?.secure === false;
+    edge.removeClass('overloaded contingency-risk line-tripped');
+    if (tripped) edge.addClass('line-tripped');
+    else if (overloaded) edge.addClass('overloaded');
+    else if (insecure) edge.addClass('contingency-risk');
+  });
 }
 
 loadTopology().catch((error) => console.error('Could not load grid topology:', error));
