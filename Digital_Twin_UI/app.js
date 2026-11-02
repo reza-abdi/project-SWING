@@ -3,6 +3,10 @@ const GRID_ID = window.GRID_ID;
 const API_URL = "http://127.0.0.1:8001";
 let cy = null;
 let latestGridState = null;
+let telemetrySocket = null;
+let socketGeneration = 0;
+let reconnectAttempts = 0;
+let reconnectTimer = null;
 
 const LOAD_ICONS = [
   'icons/factory.png', 'icons/home.png', 'icons/sky-scrappers.png',
@@ -195,4 +199,52 @@ function applyLineClasses(telemetry, contingency) {
   });
 }
 
-loadTopology().catch((error) => console.error('Could not load grid topology:', error));
+function scheduleTelemetryReconnect(generation) {
+  if (generation !== socketGeneration || reconnectTimer !== null) return;
+  const delay = Math.min(30000, 500 * (2 ** Math.min(reconnectAttempts, 6)));
+  reconnectAttempts += 1;
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null;
+    if (generation === socketGeneration) connectTelemetry();
+  }, delay);
+}
+
+function connectTelemetry() {
+  if (!['39', '118'].includes(String(GRID_ID)) || typeof window.WebSocket !== 'function') return;
+  if (reconnectTimer !== null) {
+    window.clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  const generation = ++socketGeneration;
+  const socketUrl = `${API_URL.replace(/^http/, 'ws')}/ws/telemetry/${encodeURIComponent(GRID_ID)}`;
+  let socket;
+  try {
+    socket = new window.WebSocket(socketUrl);
+  } catch (error) {
+    scheduleTelemetryReconnect(generation);
+    return;
+  }
+  telemetrySocket = socket;
+  socket.onmessage = (event) => {
+    if (generation !== socketGeneration || telemetrySocket !== socket) return;
+    try {
+      const frame = JSON.parse(event.data);
+      if (!frame || String(frame.grid) !== String(GRID_ID) || !Array.isArray(frame.lines) || !Array.isArray(frame.buses)) return;
+      latestGridState = frame;
+      reconnectAttempts = 0;
+      applyLineClasses(frame, window.latestContingency);
+    } catch (error) {
+      console.error('Invalid telemetry frame');
+    }
+  };
+  socket.onclose = () => {
+    if (generation !== socketGeneration || telemetrySocket !== socket) return;
+    telemetrySocket = null;
+    scheduleTelemetryReconnect(generation);
+  };
+  socket.onerror = () => socket.close();
+}
+
+loadTopology()
+  .then(connectTelemetry)
+  .catch((error) => console.error('Could not load grid topology:', error));
