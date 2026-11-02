@@ -64,6 +64,19 @@ async function loadTopology() {
         },
       },
       {
+        selector: 'node.high-demand',
+        style: {
+          'border-width': 3,
+          'border-color': '#ffd700',
+          'border-opacity': 1,
+          'shadow-blur': 20,
+          'shadow-color': '#ffd700',
+          'shadow-opacity': 0.9,
+          width: 42,
+          height: 42,
+        },
+      },
+      {
         selector: 'edge',
         style: {
           width: 2,
@@ -190,6 +203,20 @@ function renderResilience(frame) {
   setText('griSecurity', formatMetric(metrics.security_score, 1));
 }
 
+function renderHighDemandNodes(frame) {
+  if (!cy) return;
+  const loads = frame.bus_loads && typeof frame.bus_loads === 'object' ? frame.bus_loads : {};
+  const values = Object.values(loads).filter((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0);
+  const peak = values.length ? Math.max(...values) : 0;
+  cy.nodes().forEach((node) => {
+    node.removeClass('high-demand');
+    const load = loads[node.id()];
+    if (node.data('node_type') === 'LOAD' && peak > 0 && typeof load === 'number' && Number.isFinite(load) && load >= peak * 0.9) {
+      node.addClass('high-demand');
+    }
+  });
+}
+
 function showTooltip(lines, event) {
   const tooltip = document.getElementById('line-tooltip');
   if (!tooltip) return;
@@ -294,6 +321,7 @@ function connectTelemetry() {
       reconnectAttempts = 0;
       renderLiveSummary(frame);
       renderResilience(frame);
+      renderHighDemandNodes(frame);
       applyLineClasses(frame, window.latestContingency);
     } catch (error) {
       console.error('Invalid telemetry frame');

@@ -632,6 +632,10 @@ def _telemetry_snapshot(twin: TwinModel) -> dict[str, object]:
 
     line_loadings = [float(value) for value in net.res_line["loading_percent"]] if not net.res_line.empty else []
     bus_voltages = [float(value) for value in net.res_bus["vm_pu"]] if not net.res_bus.empty else []
+    bus_loads = {str(int(bus_id)): 0.0 for bus_id in net.bus.index}
+    for _, load in net.load.iterrows():
+        bus_id = str(int(load["bus"]))
+        bus_loads[bus_id] = bus_loads.get(bus_id, 0.0) + float(load["p_mw"])
     return _json_safe({
         "grid": twin.grid_type,
         "timestamp": time.time(),
@@ -646,6 +650,7 @@ def _telemetry_snapshot(twin: TwinModel) -> dict[str, object]:
         "lines": records(net.res_line, ("p_from_mw", "p_to_mw", "i_from_ka", "i_to_ka", "loading_percent")),
         "buses": records(net.res_bus, ("vm_pu", "va_degree")),
         "loads": records(net.res_load, ("p_mw", "q_mvar")),
+        "bus_loads": bus_loads,
         "resilience": get_resilience_index(net),
     })
 
