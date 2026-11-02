@@ -3,6 +3,7 @@ const GRID_ID = window.GRID_ID;
 const API_URL = "http://127.0.0.1:8001";
 let cy = null;
 let latestGridState = null;
+let selectedBus = null;
 let telemetrySocket = null;
 let socketGeneration = 0;
 let reconnectAttempts = 0;
@@ -102,6 +103,7 @@ async function loadTopology() {
   cy.on('tap', 'edge', (event) => {
     toggleLineState(event.target).catch((error) => console.error('Line action failed:', error));
   });
+  cy.on('tap', 'node', (event) => selectFacility(event.target.id()));
   return cy;
 }
 
@@ -217,6 +219,32 @@ function renderHighDemandNodes(frame) {
   });
 }
 
+function selectFacility(busId) {
+  if (!/^\d+$/.test(String(busId))) return;
+  selectedBus = String(busId);
+  const panel = document.getElementById('sidePanel');
+  if (panel) panel.classList.remove('hidden');
+  const toggle = document.getElementById('togglePanelBtn');
+  if (toggle) toggle.textContent = 'Hide Command Center';
+  const input = document.getElementById('loadInput');
+  if (input) input.value = '';
+  setText('loadCommandResult', '');
+  renderSelectedFacility(latestGridState);
+}
+
+function renderSelectedFacility(frame) {
+  if (!selectedBus) return;
+  const loads = frame?.bus_loads;
+  const value = loads && Object.prototype.hasOwnProperty.call(loads, selectedBus)
+    ? loads[selectedBus] : null;
+  const formatted = formatMetric(value, 2);
+  setText('targetFacility', `Facility ${selectedBus}`);
+  setText('currentLoad', `${formatted} MW`);
+  const input = document.getElementById('loadInput');
+  if (input) input.placeholder = typeof value === 'number' && Number.isFinite(value)
+    ? `Current: ${formatted} MW` : 'Current load unavailable';
+}
+
 function showTooltip(lines, event) {
   const tooltip = document.getElementById('line-tooltip');
   if (!tooltip) return;
@@ -323,6 +351,7 @@ function connectTelemetry() {
       renderResilience(frame);
       renderHighDemandNodes(frame);
       applyLineClasses(frame, window.latestContingency);
+      renderSelectedFacility(frame);
     } catch (error) {
       console.error('Invalid telemetry frame');
     }
