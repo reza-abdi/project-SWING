@@ -82,7 +82,34 @@ async function loadTopology() {
     ],
   });
   installHoverTooltips();
+  cy.on('tap', 'edge', (event) => {
+    toggleLineState(event.target).catch((error) => console.error('Line action failed:', error));
+  });
   return cy;
+}
+
+async function toggleLineState(edge) {
+  if (edge.data('mutationPending') === true) return;
+  const lineId = edge.id().replace(/^line/, '');
+  if (!/^\d+$/.test(lineId)) throw new Error('Invalid line identifier');
+  const wasTripped = edge.data('tripped') === true;
+  const nextTripped = !wasTripped;
+  edge.data('mutationPending', true);
+  edge.data('tripped', nextTripped);
+  applyLineClasses(latestGridState, window.latestContingency);
+  const url = nextTripped
+    ? `${API_URL}/inject_fault/${encodeURIComponent(lineId)}?grid=${encodeURIComponent(GRID_ID)}`
+    : `${API_URL}/restore_line/${encodeURIComponent(GRID_ID)}/${encodeURIComponent(lineId)}`;
+  try {
+    const response = await fetch(url, { method: 'POST' });
+    if (!response.ok) throw new Error(`Twin rejected line action (${response.status})`);
+  } catch (error) {
+    edge.data('tripped', wasTripped);
+    applyLineClasses(latestGridState, window.latestContingency);
+    throw error;
+  } finally {
+    edge.data('mutationPending', false);
+  }
 }
 
 function metricById(collection, id) {
