@@ -165,6 +165,31 @@ function renderLiveSummary(frame) {
   setText('statScenario', typeof frame.scenario === 'string' ? frame.scenario : 'Unavailable');
 }
 
+function scoreClass(value, collapsed = false) {
+  if (collapsed || typeof value !== 'number' || !Number.isFinite(value)) return 'badge-red';
+  if (value < 50) return 'badge-red';
+  if (value < 80) return 'badge-amber';
+  return 'badge-green';
+}
+
+function renderResilience(frame) {
+  const metrics = frame.resilience && typeof frame.resilience === 'object' ? frame.resilience : {};
+  const collapsed = metrics.collapsed === true;
+  const score = metrics.grid_resilience_index;
+  const overall = document.getElementById('griScore');
+  if (overall) {
+    overall.textContent = collapsed
+      ? `COLLAPSED · ${formatMetric(score, 2)}`
+      : formatMetric(score, 2);
+    overall.classList.remove('badge-green', 'badge-amber', 'badge-red');
+    overall.classList.add(scoreClass(score, collapsed));
+    overall.setAttribute('aria-label', collapsed ? 'Grid collapsed' : 'Grid resilience score');
+  }
+  setText('griVoltage', formatMetric(metrics.voltage_score, 1));
+  setText('griLoading', formatMetric(metrics.loading_score, 1));
+  setText('griSecurity', formatMetric(metrics.security_score, 1));
+}
+
 function showTooltip(lines, event) {
   const tooltip = document.getElementById('line-tooltip');
   if (!tooltip) return;
@@ -268,6 +293,7 @@ function connectTelemetry() {
       latestGridState = frame;
       reconnectAttempts = 0;
       renderLiveSummary(frame);
+      renderResilience(frame);
       applyLineClasses(frame, window.latestContingency);
     } catch (error) {
       console.error('Invalid telemetry frame');
