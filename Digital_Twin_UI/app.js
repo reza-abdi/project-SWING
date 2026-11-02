@@ -245,6 +245,51 @@ function renderSelectedFacility(frame) {
     ? `Current: ${formatted} MW` : 'Current load unavailable';
 }
 
+function responseMessage(text, status) {
+  try {
+    const payload = JSON.parse(text);
+    if (typeof payload.detail === 'string') return payload.detail;
+    if (typeof payload.error === 'string') return payload.error;
+  } catch (_error) {
+    // Non-JSON error bodies are reported as plain text below.
+  }
+  return text.trim().slice(0, 500) || `Request failed (${status})`;
+}
+
+function initLoadCommand() {
+  const button = document.getElementById('applyLoadBtn');
+  const input = document.getElementById('loadInput');
+  if (!button || !input) return;
+  button.addEventListener('click', async (event) => {
+    event.preventDefault();
+    const targetBus = selectedBus;
+    const rawValue = input.value.trim();
+    const newMw = Number(rawValue);
+    const result = document.getElementById('loadCommandResult');
+    if (!targetBus) {
+      if (result) result.textContent = 'Select a facility first.';
+      return;
+    }
+    if (!rawValue || !Number.isFinite(newMw) || newMw < 0) {
+      if (result) result.textContent = 'Enter a finite, non-negative MW value.';
+      return;
+    }
+    button.disabled = true;
+    if (result) result.textContent = `Updating bus ${targetBus}…`;
+    try {
+      const query = new URLSearchParams({ new_mw: String(newMw), grid: String(GRID_ID) });
+      const response = await fetch(`${API_URL}/change_load/${encodeURIComponent(targetBus)}?${query}`, { method: 'POST' });
+      const body = await response.text();
+      if (!response.ok) throw new Error(responseMessage(body, response.status));
+      if (result) result.textContent = `Load command accepted for bus ${targetBus}: ${newMw.toFixed(2)} MW.`;
+    } catch (error) {
+      if (result) result.textContent = `Load command failed: ${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 function showTooltip(lines, event) {
   const tooltip = document.getElementById('line-tooltip');
   if (!tooltip) return;
@@ -367,3 +412,4 @@ function connectTelemetry() {
 loadTopology()
   .then(connectTelemetry)
   .catch((error) => console.error('Could not load grid topology:', error));
+initLoadCommand();
