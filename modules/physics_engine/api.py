@@ -630,9 +630,19 @@ def _telemetry_snapshot(twin: TwinModel) -> dict[str, object]:
             for index, row in frame.iterrows()
         ]
 
+    line_loadings = [float(value) for value in net.res_line["loading_percent"]] if not net.res_line.empty else []
+    bus_voltages = [float(value) for value in net.res_bus["vm_pu"]] if not net.res_bus.empty else []
     return _json_safe({
         "grid": twin.grid_type,
         "timestamp": time.time(),
+        "time_step": twin.time_step,
+        "simulation_status": twin.simulation_status,
+        "scenario": twin.current_scenario,
+        "last_event": twin.event_history[-1] if twin.event_history else "None",
+        "total_demand_mw": float(net.load["p_mw"].sum()),
+        "total_generation_mw": float(net.gen.loc[net.gen["in_service"], "p_mw"].sum()),
+        "max_line_loading_percent": max(line_loadings) if line_loadings else 0.0,
+        "max_voltage_pu": max((abs(value) for value in bus_voltages), default=None),
         "lines": records(net.res_line, ("p_from_mw", "p_to_mw", "i_from_ka", "i_to_ka", "loading_percent")),
         "buses": records(net.res_bus, ("vm_pu", "va_degree")),
         "loads": records(net.res_load, ("p_mw", "q_mvar")),

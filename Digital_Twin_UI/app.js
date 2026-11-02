@@ -130,6 +130,41 @@ function formatMetric(value, decimals) {
     : 'Unavailable';
 }
 
+function sumMetric(records, key) {
+  if (!Array.isArray(records) || records.length === 0) return null;
+  const values = records.map((record) => record?.[key]);
+  if (values.some((value) => typeof value !== 'number' || !Number.isFinite(value))) return null;
+  return values.reduce((sum, value) => sum + value, 0);
+}
+
+function maxMetric(records, key, absolute = false) {
+  if (!Array.isArray(records)) return null;
+  const values = records.map((record) => record?.[key]);
+  if (values.length === 0 || values.some((value) => typeof value !== 'number' || !Number.isFinite(value))) return null;
+  return Math.max(...values.map((value) => absolute ? Math.abs(value) : value));
+}
+
+function setText(id, value) {
+  const element = document.getElementById(id);
+  if (element) element.textContent = value;
+}
+
+function renderLiveSummary(frame) {
+  const demand = Number.isFinite(frame.total_demand_mw) ? frame.total_demand_mw : sumMetric(frame.loads, 'p_mw');
+  const generation = Number.isFinite(frame.total_generation_mw) ? frame.total_generation_mw : null;
+  const maxLoading = Number.isFinite(frame.max_line_loading_percent)
+    ? frame.max_line_loading_percent : maxMetric(frame.lines, 'loading_percent');
+  const maxVoltage = Number.isFinite(frame.max_voltage_pu) ? frame.max_voltage_pu : maxMetric(frame.buses, 'vm_pu', true);
+  setText('statDemand', `${formatMetric(demand, 2)} MW`);
+  setText('statGeneration', `${formatMetric(generation, 2)} MW`);
+  setText('statMaxLoad', `${formatMetric(maxLoading, 1)}%`);
+  setText('statVoltage', `${formatMetric(maxVoltage, 3)} p.u.`);
+  setText('statStatus', typeof frame.simulation_status === 'string' ? frame.simulation_status : 'UNAVAILABLE');
+  setText('statTimeStep', Number.isInteger(frame.time_step) ? `t=${frame.time_step}` : 'Unavailable');
+  setText('statLastEvent', typeof frame.last_event === 'string' ? frame.last_event : 'Unavailable');
+  setText('statScenario', typeof frame.scenario === 'string' ? frame.scenario : 'Unavailable');
+}
+
 function showTooltip(lines, event) {
   const tooltip = document.getElementById('line-tooltip');
   if (!tooltip) return;
@@ -232,6 +267,7 @@ function connectTelemetry() {
       if (!frame || String(frame.grid) !== String(GRID_ID) || !Array.isArray(frame.lines) || !Array.isArray(frame.buses)) return;
       latestGridState = frame;
       reconnectAttempts = 0;
+      renderLiveSummary(frame);
       applyLineClasses(frame, window.latestContingency);
     } catch (error) {
       console.error('Invalid telemetry frame');
