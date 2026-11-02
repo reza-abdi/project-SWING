@@ -290,6 +290,56 @@ function initLoadCommand() {
   });
 }
 
+function initStressControls() {
+  const loadSlider = document.getElementById('loadSlider');
+  const derateSlider = document.getElementById('derateSlider');
+  const loadValue = document.getElementById('loadSliderValue');
+  const derateValue = document.getElementById('derateSliderValue');
+  const button = document.getElementById('applyStressBtn');
+  const result = document.getElementById('stressResult');
+  if (!loadSlider || !derateSlider || !button) return;
+
+  const updateLabels = () => {
+    if (loadValue) loadValue.textContent = `${loadSlider.value}%`;
+    if (derateValue) derateValue.textContent = `${derateSlider.value}%`;
+  };
+  loadSlider.addEventListener('input', updateLabels);
+  derateSlider.addEventListener('input', updateLabels);
+  updateLabels();
+
+  button.addEventListener('click', async (event) => {
+    event.preventDefault();
+    if (button.disabled) return;
+    const loadPercent = Number(loadSlider.value);
+    const deratePercent = Number(derateSlider.value);
+    const loadMultiplier = loadPercent / 100;
+    const derateMultiplier = deratePercent / 100;
+    if (!Number.isFinite(loadMultiplier) || !Number.isFinite(derateMultiplier) || loadMultiplier <= 0 || derateMultiplier <= 0) {
+      if (result) result.textContent = 'Choose valid positive load and line-capacity percentages.';
+      return;
+    }
+    button.disabled = true;
+    if (result) result.textContent = 'Applying stress test…';
+    try {
+      const response = await fetch(`${API_URL}/stress_test/${encodeURIComponent(GRID_ID)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ load_multiplier: loadMultiplier, derate_multiplier: derateMultiplier }),
+      });
+      const body = await response.text();
+      if (!response.ok) throw new Error(responseMessage(body, response.status));
+      const payload = JSON.parse(body);
+      const gri = Number.isFinite(payload.grid_resilience_index)
+        ? ` GRI: ${payload.grid_resilience_index.toFixed(2)}.` : '';
+      if (result) result.textContent = `Stress applied: load ${loadPercent}%, line capacity ${deratePercent}%.${gri}`;
+    } catch (error) {
+      if (result) result.textContent = `Stress test failed: ${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 function showTooltip(lines, event) {
   const tooltip = document.getElementById('line-tooltip');
   if (!tooltip) return;
@@ -413,3 +463,4 @@ loadTopology()
   .then(connectTelemetry)
   .catch((error) => console.error('Could not load grid topology:', error));
 initLoadCommand();
+initStressControls();
