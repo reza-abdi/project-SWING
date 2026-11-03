@@ -94,7 +94,7 @@ function renderAgentProposal(proposal) {
   document.getElementById("agentBriefText").textContent = typeof proposal.operator_brief === 'string'
     ? proposal.operator_brief : 'No operator brief is available.';
 
-  renderForecastSource(proposal.forecast_bounds);
+  renderForecastSource(proposal.forecast || { source: proposal.forecast_source, bounds: proposal.forecast_bounds });
   renderShapBars(proposal.feature_importance);
   renderGriBar(proposal.validation || proposal.validation_result);
 
@@ -119,29 +119,36 @@ function renderAgentProposal(proposal) {
   }
 }
 
-function renderForecastSource(forecastBounds) {
+function renderForecastSource(forecast) {
   const el = document.getElementById("forecastSourceBadge");
-  if (!forecastBounds || !forecastBounds.source) { el.innerHTML = ""; return; }
-
-  const isTft = forecastBounds.source === "TFT";
-
-  if (isTft) {
-    // Multi-Horizon Breakdown
-    el.innerHTML = `
-      <div style="margin-bottom:10px;">
-        <span class="badge-green" style="font-size:11px;">&#9679; TFT (Multi-Horizon P90 Peak)</span>
-      </div>
-      <div style="display:flex; gap:10px; font-size:12px; color:var(--text-dim); background:#2a2a2a; padding:10px; border-radius:6px;">
-        <div><strong>1 Hour:</strong><br><span style="color:#fff;">${forecastBounds.p90_1h?.toFixed(1) || '--'} MW</span></div>
-        <div><strong>2 Hours:</strong><br><span style="color:#fff;">${forecastBounds.p90_2h?.toFixed(1) || '--'} MW</span></div>
-        <div><strong>6 Hours:</strong><br><span style="color:#fff;">${forecastBounds.p90_6h?.toFixed(1) || '--'} MW</span></div>
-        <div><strong>24 Hours:</strong><br><span style="color:#fff;">${forecastBounds.p90_24h?.toFixed(1) || '--'} MW</span></div>
-      </div>
-    `;
-  } else {
-    // Fallback LightGBM View
-    el.innerHTML = `<span class="badge-amber" style="font-size:11px;">&#9679; LightGBM (Next Hour Only): ${forecastBounds.p90_1h?.toFixed(1) || '--'} MW</span>`;
+  el.replaceChildren();
+  const source = forecast?.source;
+  const bounds = forecast?.bounds && typeof forecast.bounds === 'object' ? forecast.bounds : {};
+  if (source !== 'TFT' && source !== 'LIGHTGBM') {
+    el.textContent = 'Forecast unavailable.';
+    return;
   }
+  const isTft = source === 'TFT';
+  const heading = document.createElement('div');
+  heading.className = isTft ? 'badge-green' : 'badge-amber';
+  heading.style.cssText = 'font-size:11px;margin-bottom:10px;';
+  heading.textContent = isTft ? 'TFT · multi-horizon P90' : 'LightGBM · next-hour P90';
+  el.appendChild(heading);
+  const values = document.createElement('div');
+  values.style.cssText = 'display:flex;gap:10px;font-size:12px;color:var(--text-dim);background:#2a2a2a;padding:10px;border-radius:6px;';
+  const horizons = isTft ? [['1 hour', 'p90_1h'], ['2 hours', 'p90_2h'], ['6 hours', 'p90_6h'], ['24 hours', 'p90_24h']] : [['1 hour', 'p90_1h']];
+  for (const [label, key] of horizons) {
+    const item = document.createElement('div');
+    const name = document.createElement('strong');
+    name.textContent = `${label}:`;
+    const measurement = document.createElement('span');
+    measurement.style.color = '#fff';
+    const value = bounds[key];
+    measurement.textContent = typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)} MW` : 'Unavailable';
+    item.append(name, document.createElement('br'), measurement);
+    values.appendChild(item);
+  }
+  el.appendChild(values);
 }
 
 function renderShapBars(featureImportance) {
