@@ -49,12 +49,37 @@ function initChart() {
   });
 }
 
+function finiteForecastValue(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function buildQuantileDatasets(forecast) {
+  const bounds = forecast?.bounds && typeof forecast.bounds === 'object' ? forecast.bounds : {};
+  const horizons = forecast?.source === 'TFT' ? ['1h', '2h', '6h', '24h'] : ['1h'];
+  const points = (quantile) => [null, ...['1h', '2h', '6h', '24h'].map((horizon) =>
+    horizons.includes(horizon) ? finiteForecastValue(bounds[`${quantile}_${horizon}`]) : null,
+  )];
+  return [
+    { label: 'P90 (High Risk)', data: points('p90'), borderColor: '#ff4757', backgroundColor: 'rgba(255, 71, 87, 0.1)', fill: 1, tension: 0.4 },
+    { label: 'P50 (Expected)', data: points('p50'), borderColor: '#00d4ff', backgroundColor: 'transparent', borderDash: [5, 5], tension: 0.4 },
+    { label: 'P10 (Low Risk)', data: points('p10'), borderColor: '#2ed573', backgroundColor: 'rgba(0, 212, 255, 0.1)', fill: 1, tension: 0.4 },
+  ];
+}
+
+function renderForecast(forecast) {
+  const source = forecast?.source;
+  const label = source === 'TFT' ? 'TFT (multi-horizon)' : source === 'LIGHTGBM' ? 'LightGBM (next hour only)' : 'Forecast unavailable';
+  document.getElementById('modelSource').textContent = label;
+  forecastChart.data.datasets = source === 'TFT' || source === 'LIGHTGBM' ? buildQuantileDatasets(forecast) : [];
+  forecastChart.update();
+}
+
 function fetchAndRenderForecast() {
   const btn = document.getElementById("refreshForecastBtn");
   btn.disabled = true;
   btn.textContent = "Running Inference...";
 
-  // Provide basic telemetry to trigger the forecast node
+  // Clearly labeled demo features until live forecast telemetry is available.
   const mockTelemetry = {
     hour_sin: 0.5, hour_cos: 0.5, dayofweek: 3, month: 7,
     load_lag_1: 0.85, load_lag_2: 0.86, load_lag_24: 0.82, Northern_Region_Avg_T2M: 32.5
@@ -63,50 +88,18 @@ function fetchAndRenderForecast() {
   fetch(`${AI_API_URL}/propose/${getSelectedGrid()}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(mockTelemetry)
+    body: JSON.stringify({ telemetry: mockTelemetry })
   })
-    .then(res => res.json())
-    .then(data => {
-      const bounds = data.forecast_bounds;
-      const currentMw = data.proposed_action ? data.forecast_bounds.capacity_max : (bounds.p50_1h || 0); // Approximate current
-
-      document.getElementById("modelSource").textContent = bounds.source === "TFT" ? "TFT (Multi-Horizon)" : "LightGBM (Next-Hour)";
-
-      // Build the datasets
-      let p90Data = [null, bounds.p90_1h, bounds.p90_2h, bounds.p90_6h, bounds.p90_24h];
-      let p50Data = [null, bounds.p50_1h, null, null, null]; // LightGBM typically gives p50 for 1h
-      let p10Data = [null, bounds.p10_1h, null, null, null];
-
-      forecastChart.data.datasets = [
-        {
-          label: 'P90 (High Risk)',
-          data: p90Data,
-          borderColor: '#ff4757', // accent-red
-          backgroundColor: 'rgba(255, 71, 87, 0.1)',
-          fill: 1, // Fill to the next dataset (P50)
-          tension: 0.4
-        },
-        {
-          label: 'P50 (Expected)',
-          data: p50Data,
-          borderColor: '#00d4ff', // accent-cyan
-          backgroundColor: 'transparent',
-          borderDash: [5, 5],
-          tension: 0.4
-        },
-        {
-          label: 'P10 (Low Risk)',
-          data: p10Data,
-          borderColor: '#2ed573', // accent-green
-          backgroundColor: 'rgba(0, 212, 255, 0.1)',
-          fill: 1,
-          tension: 0.4
-        }
-      ];
-
+    .then(async (response) => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `Forecast request failed (${response.status})`);
+      renderForecast(data.forecast);
+    })
+    .catch((error) => {
+      document.getElementById('modelSource').textContent = `Forecast unavailable: ${error.message}`;
+      forecastChart.data.datasets = [];
       forecastChart.update();
     })
-    .catch(err => console.error("Forecast fetch failed:", err))
     .finally(() => {
       btn.disabled = false;
       btn.textContent = "Pull Latest Forecast";
