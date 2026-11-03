@@ -6,6 +6,7 @@ import math
 import math
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from modules.ai_agents.agent_core import GridState, build_agent_graph
@@ -16,7 +17,7 @@ from modules.ai_agents.twin_client import validate_operator_forecast_features
 from modules.ai_agents import proposal_store
 from modules.event_store import get_events, log_event
 from modules.config import runtime_settings
-from modules.security import require_operator
+from modules.security import allowed_origins, require_operator
 
 
 class ProposeRequest(BaseModel):
@@ -40,6 +41,13 @@ class ProposeRequest(BaseModel):
 
 
 app = FastAPI(title="Project SWING Decision Support", version="1.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+)
 
 
 __all__ = ["app", "GridState", "TwinClient", "build_agent_graph"]

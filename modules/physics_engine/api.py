@@ -15,13 +15,14 @@ import pandapower as pp
 from fastapi import Depends, FastAPI
 from fastapi import HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from modules.config import runtime_paths, runtime_settings
 from modules.event_store import log_event
 from modules.physics_engine.twin_model import TwinModel
 from modules.physics_engine.grid_metrics import get_resilience_index, get_security_metrics
-from modules.security import require_admin
+from modules.security import allowed_origins, require_admin, validate_websocket_origin
 
 
 grids: dict[str, TwinModel] = {}
@@ -35,6 +36,13 @@ app = FastAPI(
     title="Digital Twin API",
     description="Physics-only simulation API for IEEE transmission grid models.",
     version="1.0.0",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
 )
 
 
@@ -659,6 +667,9 @@ def _telemetry_snapshot(twin: TwinModel) -> dict[str, object]:
 @app.websocket("/ws/telemetry/{grid}")
 async def stream_telemetry(websocket: WebSocket, grid: str) -> None:
     """Stream one-second snapshots for an available grid."""
+    if not validate_websocket_origin(websocket):
+        await websocket.close(code=1008)
+        return
     try:
         grid_id = validate_grid_id(grid)
     except ValueError:
