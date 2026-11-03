@@ -62,6 +62,7 @@
 <div class="chat-wrapper">
   <div class="chat-header">
     <h1>Ask the Grid</h1>
+    <label for="gridSelect" class="visually-hidden">Grid</label>
     <select id="gridSelect">
       <option value="118">IEEE 118</option>
       <option value="39">IEEE 39</option>
@@ -80,7 +81,7 @@
     <span class="suggestion-chip" data-q="What would you recommend if congestion worsens?">What would you recommend if congestion worsens?</span>
   </div>
 
-  <div id="chatWindow" class="chat-window">
+  <div id="chatWindow" class="chat-window" role="log" aria-live="polite" aria-label="Conversation">
     <div class="chat-msg assistant">
       <div class="label">AGENT</div>
       <div class="bubble">Ask me anything about the current grid situation -- I'll answer using live data, not guesses.</div>
@@ -88,6 +89,7 @@
   </div>
 
   <div class="chat-input-row">
+    <label for="chatInput" class="visually-hidden">Ask about grid status, risk, or the latest proposal</label>
     <input type="text" id="chatInput" placeholder="Ask about grid status, risk, or the latest proposal...">
     <button id="sendBtn">Send</button>
   </div>

@@ -23,6 +23,31 @@
 
 * { box-sizing: border-box; }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent-cyan);
+  outline-offset: 3px;
+}
+
+@media (max-width: 640px) {
+  .ai-nav { flex-wrap: wrap; gap: 12px; padding-inline: 14px; }
+  .ai-wrapper, .chat-wrapper, .dashboard-wrapper, .rl-wrapper { padding-inline: 14px; }
+  .ai-header, .chat-header, .header-row { flex-wrap: wrap; gap: 12px; }
+  .policy-grid { grid-template-columns: 1fr; }
+  .chart-container { height: 360px; padding: 12px; }
+}
+
 html, body {
   margin: 0;
   padding: 0;

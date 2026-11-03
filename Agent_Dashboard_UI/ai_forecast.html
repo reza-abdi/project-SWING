@@ -36,6 +36,7 @@
 <div class="dashboard-wrapper">
   <div class="header-row">
     <h1>Multi-Horizon Demand Forecast</h1>
+    <label for="gridSelect" class="visually-hidden">Grid</label>
     <select id="gridSelect">
       <option value="118">IEEE 118</option>
       <option value="39">IEEE 39</option>
@@ -45,13 +46,13 @@
   <div class="card" style="margin-bottom: 20px; display:flex; justify-content: space-between; align-items: center;">
     <div>
         <span style="color:var(--text-dim); font-size:12px;">ACTIVE MODEL</span><br>
-        <strong id="modelSource" style="color:var(--accent-cyan);">Fetching...</strong>
+        <strong id="modelSource" style="color:var(--accent-cyan);" aria-live="polite">Fetching...</strong>
     </div>
     <button id="refreshForecastBtn" class="action-btn btn-dark">Pull Latest Forecast</button>
   </div>
 
   <div class="chart-container">
-    <canvas id="forecastChart"></canvas>
+    <canvas id="forecastChart" role="img" aria-label="Demand forecast chart"></canvas>
   </div>
 </div>
 

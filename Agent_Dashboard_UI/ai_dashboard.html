@@ -67,7 +67,7 @@
   <div class="ai-header">
     <h1>Agent Copilot</h1>
     <div>
-      <label style="color:var(--text-dim); font-size:13px; margin-right:8px;">Grid:</label>
+      <label for="gridSelect" style="color:var(--text-dim); font-size:13px; margin-right:8px;">Grid:</label>
       <select id="gridSelect">
         <option value="118">IEEE 118</option>
         <option value="39">IEEE 39</option>
@@ -93,7 +93,7 @@
         </span>
       </div>
 
-  <div id="agentBriefContainer" class="card hidden">
+    <div id="agentBriefContainer" class="card hidden" aria-live="polite">
     <h3>Latest Proposal</h3>
     <div id="forecastSourceBadge" style="margin-bottom:10px;"></div>
     <div class="agent-brief">
@@ -120,7 +120,7 @@
   <div class="card">
     <h3>Event Timeline <span style="font-size:11px; color:var(--text-dim); text-transform:none;">(both Digital Twin + AI Agent events)</span></h3>
     <button id="refreshEventsBtn" class="action-btn btn-dark" style="margin-bottom:12px;">Refresh</button>
-    <div id="eventTimeline"><p class="gri-sub">No events loaded yet.</p></div>
+    <div id="eventTimeline" aria-live="polite"><p class="gri-sub">No events loaded yet.</p></div>
   </div>
 
 </div>
