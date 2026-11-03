@@ -226,7 +226,10 @@ function selectFacility(busId) {
   const panel = document.getElementById('sidePanel');
   if (panel) panel.classList.remove('hidden');
   const toggle = document.getElementById('togglePanelBtn');
-  if (toggle) toggle.textContent = 'Hide Command Center';
+  if (toggle) {
+    toggle.textContent = 'Hide Command Center';
+    toggle.setAttribute('aria-expanded', 'true');
+  }
   const input = document.getElementById('loadInput');
   if (input) input.value = '';
   setText('loadCommandResult', '');
@@ -395,6 +398,19 @@ function initStressControls() {
   });
 }
 
+function initPanelToggle() {
+  const panel = document.getElementById('sidePanel');
+  const button = document.getElementById('togglePanelBtn');
+  if (!panel || !button) return;
+  button.setAttribute('aria-expanded', String(!panel.classList.contains('hidden')));
+  button.addEventListener('click', () => {
+    const hidden = panel.classList.toggle('hidden');
+    button.textContent = hidden ? 'Show Command Center' : 'Hide Command Center';
+    button.setAttribute('aria-expanded', String(!hidden));
+    if (hidden && panel.contains(document.activeElement)) button.focus();
+  });
+}
+
 function showTooltip(lines, event) {
   const tooltip = document.getElementById('line-tooltip');
   if (!tooltip) return;
@@ -520,4 +536,5 @@ loadTopology()
   .catch((error) => console.error('Could not load grid topology:', error));
 initLoadCommand();
 initStressControls();
+initPanelToggle();
 startContingencyPolling();
