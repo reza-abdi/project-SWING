@@ -231,19 +231,39 @@ function renderGriBar(validationResult) {
 }
 
 function initAgentActions() {
-  document.getElementById("approveBtn").addEventListener("click", () => {
-    fetch(`${AI_API_URL}/execute/${getSelectedGrid()}`, { method: "POST" })
-      .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Execution failed");
-        return data;
-      })
-      .then(data => {
-        alert(`Executed: ${JSON.stringify(data.action)}`);
-        document.getElementById("agentBriefContainer").classList.add("hidden");
-        loadEventTimeline();
-      })
-      .catch(err => alert(`EXECUTION FAILED: ${err.message}`));
+  document.getElementById("approveBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const proposalId = button.dataset.proposalId;
+    const proposalGrid = button.dataset.gridId;
+    const currentGrid = getSelectedGrid();
+    const brief = document.getElementById('agentBriefText');
+    if (!proposalId || !proposalGrid || proposalGrid !== currentGrid) {
+      if (brief) brief.textContent = 'This proposal belongs to another grid or is no longer available. Run the risk check again.';
+      return;
+    }
+    if (!window.confirm(`Apply this validated action to the ${currentGrid}-bus simulation? This changes simulated grid state.`)) return;
+    button.disabled = true;
+    const reject = document.getElementById('rejectBtn');
+    reject.disabled = true;
+    if (brief) brief.textContent = 'Applying the approved action to the simulation…';
+    const idempotencyKey = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try {
+      const response = await fetch(`${AI_API_URL}/execute/${currentGrid}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+        body: JSON.stringify({ proposal_id: proposalId }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `Execution failed (${response.status})`);
+      document.getElementById('agentDecision').textContent = 'EXECUTED';
+      if (brief) brief.textContent = 'The approved simulation action was applied.';
+      document.getElementById('agentPillRow').classList.add('hidden');
+      loadEventTimeline();
+    } catch (error) {
+      if (brief) brief.textContent = `Execution failed: ${error.message}`;
+      button.disabled = false;
+      reject.disabled = false;
+    }
   });
 
   document.getElementById("rejectBtn").addEventListener("click", () => {
