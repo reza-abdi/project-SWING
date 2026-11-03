@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import math
+import os
 from pathlib import Path
 import sqlite3
 import statistics
@@ -89,13 +90,73 @@ def evaluate_rl_logs(models_dir: Path | None = None) -> dict:
     return report
 
 
+def evaluate_rag(db_path: Path | None = None, *, judge: bool = False) -> dict:
+    """Score up to seven active proposals against trusted IEGC retrieval excerpts."""
+    from modules.config import runtime_paths
+
+    database = db_path or runtime_paths().event_db
+    if not database.is_file():
+        return {"method": "heuristic retrieval overlap", "evaluated": 0, "results": []}
+    with sqlite3.connect(str(database)) as connection:
+        rows = connection.execute(
+            "SELECT grid_id, action_json FROM agent_proposals ORDER BY created_at DESC LIMIT 200"
+        ).fetchall()
+    selected = []
+    for grid, action_json in rows:
+        action = json.loads(action_json)
+        if action.get("action_type") != "NO_ACTION":
+            selected.append((grid, action))
+        if len(selected) == 7:
+            break
+    if not selected:
+        return {"method": "heuristic retrieval overlap", "evaluated": 0, "results": []}
+    manifest_hash = os.environ.get("SWING_TRUSTED_RAG_MANIFEST_SHA256")
+    if not manifest_hash:
+        raise ValueError("set SWING_TRUSTED_RAG_MANIFEST_SHA256 to the reviewed index manifest hash")
+    from modules.ai_agents.agent_core import retrieve_compliance_context
+    from modules.ai_agents.rag_builder import RAGBuilder
+
+    builder = RAGBuilder()
+    vector_store = builder.load_index(builder.create_embeddings(), trusted_manifest_sha256=manifest_hash)
+    results = []
+    for grid, action in selected:
+        query = str(action.get("justification", ""))[:1000]
+        context = retrieve_compliance_context(query, vector_store)
+        query_terms = {word.lower() for word in query.split() if len(word) > 3}
+        excerpt = context.text
+        excerpt_terms = {word.lower() for word in excerpt.split() if len(word) > 3}
+        item = {"grid": grid, "action_type": action.get("action_type"),
+                "citations": [{"source": citation.source, "page": citation.page} for citation in context.citations],
+                "heuristic_term_overlap": len(query_terms & excerpt_terms) / max(1, len(query_terms)),
+                "finding_type": "heuristic retrieval relevance; not a compliance determination"}
+        if judge:
+            from modules.ai_agents.llm_client import generate_with_fallback
+            prompt = ("Assess whether this retrieved regulatory excerpt is relevant to the operator's stated rationale. "
+                      "Return a short relevance label and reason; do not advise grid operation.\n"
+                      f"Rationale: {query}\nExcerpt: {excerpt[:4000]}")
+            item["optional_llm_judgment"] = generate_with_fallback(prompt)[:1000]
+            item["finding_type"] = "LLM-based relevance judgment; not a compliance determination"
+        results.append(item)
+    return {"method": "optional Gemini judge" if judge else "heuristic retrieval overlap",
+            "evaluated": len(results), "results": results}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path)
     parser.add_argument("--models", type=Path)
-    parser.add_argument("--section", choices=("forecast", "rl"), default="forecast")
+    parser.add_argument("--section", choices=("forecast", "rl", "rag", "physics"), default="forecast")
+    parser.add_argument("--database", type=Path)
+    parser.add_argument("--gemini-judge", action="store_true", help="opt in to paid Gemini relevance judgments")
     args = parser.parse_args(argv)
-    report = evaluate_forecasts(args.data, args.models) if args.section == "forecast" else evaluate_rl_logs(args.models)
+    if args.section == "forecast":
+        report = evaluate_forecasts(args.data, args.models)
+    elif args.section == "rl":
+        report = evaluate_rl_logs(args.models)
+    elif args.section == "rag":
+        report = evaluate_rag(args.database, judge=args.gemini_judge)
+    else:
+        raise SystemExit("physics evaluation is not configured yet")
     print(json.dumps(report, indent=2, allow_nan=False))
     return 0
 
