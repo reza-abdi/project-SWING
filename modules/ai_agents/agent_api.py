@@ -17,7 +17,7 @@ from modules.ai_agents.twin_client import validate_operator_forecast_features
 from modules.ai_agents import proposal_store
 from modules.event_store import get_events, log_event
 from modules.config import runtime_settings
-from modules.security import allowed_origins, require_operator
+from modules.security import RequestLimitMiddleware, allowed_origins, require_operator
 
 
 class ProposeRequest(BaseModel):
@@ -48,6 +48,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
 )
+app.add_middleware(RequestLimitMiddleware, max_body_bytes=65536)
 
 
 __all__ = ["app", "GridState", "TwinClient", "build_agent_graph"]

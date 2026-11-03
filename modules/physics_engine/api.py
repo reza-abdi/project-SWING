@@ -22,7 +22,7 @@ from modules.config import runtime_paths, runtime_settings
 from modules.event_store import log_event
 from modules.physics_engine.twin_model import TwinModel
 from modules.physics_engine.grid_metrics import get_resilience_index, get_security_metrics
-from modules.security import allowed_origins, require_admin, validate_websocket_origin
+from modules.security import RequestLimitMiddleware, allowed_origins, require_admin, validate_websocket_origin
 
 
 grids: dict[str, TwinModel] = {}
@@ -44,6 +44,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
 )
+app.add_middleware(RequestLimitMiddleware, max_body_bytes=65536)
 
 
 class ActionRequest(BaseModel):

@@ -5,9 +5,96 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import os
+import asyncio
+import json
+import time
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request, WebSocket
+
+
+class RequestLimitMiddleware:
+    """Bound JSON request bodies, expensive route rates, and concurrent workers."""
+
+    def __init__(self, app, *, max_body_bytes: int = 65536) -> None:
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+        self._hits: dict[tuple[str, str], list[float]] = {}
+        self._semaphores = {"propose": asyncio.Semaphore(2), "chat": asyncio.Semaphore(3),
+                            "optimize": asyncio.Semaphore(2), "contingency": asyncio.Semaphore(2),
+                            "forecast": asyncio.Semaphore(2)}
+
+    @staticmethod
+    def _category(path: str) -> tuple[str, int] | None:
+        routes = (("/propose/", "propose", 5), ("/chat/", "chat", 12),
+                  ("/forecast/", "forecast", 30), ("/optimize_action/", "optimize", 10),
+                  ("/contingency/", "contingency", 6))
+        return next(((name, rate) for prefix, name, rate in routes if path.startswith(prefix)), None)
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        category = self._category(path)
+        client = scope.get("client")
+        identity = client[0] if client else "unknown"
+        now = time.monotonic()
+        if category:
+            name, limit = category
+            key = (identity, name)
+            hits = [stamp for stamp in self._hits.get(key, ()) if now - stamp < 60.0]
+            if len(hits) >= limit:
+                self._hits[key] = hits
+                await self._respond(send, 429, "Request rate limit exceeded")
+                return
+            hits.append(now)
+            self._hits[key] = hits
+            if len(self._hits) > 10000:
+                self._hits = {item: stamps for item, stamps in self._hits.items() if stamps and now - stamps[-1] < 60.0}
+
+        body = bytearray()
+        events = []
+        while True:
+            event = await receive()
+            if event["type"] == "http.disconnect":
+                return
+            chunk = event.get("body", b"")
+            body.extend(chunk)
+            if len(body) > self.max_body_bytes:
+                await self._respond(send, 413, "Request body is too large")
+                return
+            events.append(event)
+            if not event.get("more_body", False):
+                break
+        replay = iter(events)
+
+        async def replay_receive():
+            try:
+                return next(replay)
+            except StopIteration:
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+        semaphore = self._semaphores.get(category[0]) if category else None
+        if semaphore is not None:
+            try:
+                await asyncio.wait_for(semaphore.acquire(), timeout=0.001)
+            except asyncio.TimeoutError:
+                await self._respond(send, 429, "Expensive request concurrency limit reached")
+                return
+        try:
+            await self.app(scope, replay_receive, send)
+        finally:
+            if semaphore is not None:
+                semaphore.release()
+
+    @staticmethod
+    async def _respond(send, status: int, message: str) -> None:
+        payload = json.dumps({"detail": message}).encode("utf-8")
+        headers = [(b"content-type", b"application/json"), (b"content-length", str(len(payload)).encode()),
+                   (b"retry-after", b"60")]
+        await send({"type": "http.response.start", "status": status, "headers": headers})
+        await send({"type": "http.response.body", "body": payload})
 
 
 def allowed_origins() -> list[str]:
