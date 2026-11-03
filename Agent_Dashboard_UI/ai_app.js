@@ -146,24 +146,40 @@ function renderForecastSource(forecastBounds) {
 
 function renderShapBars(featureImportance) {
   const el = document.getElementById("shapBars");
-  const ranked = featureImportance?.ranked_features || [];
-  if (!ranked.length) { el.innerHTML = `<p class="gri-sub">No feature importance available for this run.</p>`; return; }
+  const ranked = Array.isArray(featureImportance?.ranked_features)
+    ? featureImportance.ranked_features.filter((item) => Array.isArray(item) && typeof item[0] === 'string' && typeof item[1] === 'number' && Number.isFinite(item[1])).slice(0, 5)
+    : [];
+  el.replaceChildren();
+  if (!ranked.length) {
+    const empty = document.createElement('p');
+    empty.className = 'gri-sub';
+    empty.textContent = 'No feature importance available for this run.';
+    el.appendChild(empty);
+    return;
+  }
 
-  const maxAbs = Math.max(...ranked.map(([, v]) => Math.abs(v)));
-  el.innerHTML = ranked.slice(0, 5).map(([name, value]) => {
+  const maxAbs = Math.max(...ranked.map(([, value]) => Math.abs(value)));
+  for (const [name, value] of ranked) {
     const pct = maxAbs > 0 ? (Math.abs(value) / maxAbs) * 100 : 0;
-    const color = value >= 0 ? "var(--accent-red)" : "var(--accent-cyan)";
-    return `
-      <div style="margin-bottom:8px;">
-        <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-bottom:3px;">
-          <span>${name}</span><span>${value >= 0 ? "+" : ""}${value.toFixed(2)} MW</span>
-        </div>
-        <div style="background:#2a2a2a; border-radius:3px; height:6px; overflow:hidden;">
-          <div style="width:${pct}%; background:${color}; height:100%;"></div>
-        </div>
-      </div>
-    `;
-  }).join("");
+    const row = document.createElement('div');
+    row.style.marginBottom = '8px';
+    const labelRow = document.createElement('div');
+    labelRow.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;color:var(--text-dim);margin-bottom:3px;';
+    const nameNode = document.createElement('span');
+    nameNode.textContent = name;
+    const valueNode = document.createElement('span');
+    valueNode.textContent = `${value >= 0 ? '+' : ''}${value.toFixed(2)} MW`;
+    labelRow.append(nameNode, valueNode);
+    const track = document.createElement('div');
+    track.style.cssText = 'background:#2a2a2a;border-radius:3px;height:6px;overflow:hidden;';
+    const bar = document.createElement('div');
+    bar.style.width = `${pct}%`;
+    bar.style.height = '100%';
+    bar.style.backgroundColor = value >= 0 ? 'var(--accent-red)' : 'var(--accent-cyan)';
+    track.appendChild(bar);
+    row.append(labelRow, track);
+    el.appendChild(row);
+  }
 }
 
 function renderGriBar(validationResult) {
