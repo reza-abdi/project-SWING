@@ -23,11 +23,15 @@ function getSelectedGrid() {
 function appendMessage(role, content) {
   const chatWindowEl = document.getElementById("chatWindow");
   const div = document.createElement("div");
-  div.className = `chat-msg ${role}`;
-  div.innerHTML = `
-    <div class="label">${role === "user" ? "YOU" : "AGENT"}</div>
-    <div class="bubble">${content}</div>
-  `;
+  const safeRole = role === 'user' ? 'user' : 'assistant';
+  div.className = `chat-msg ${safeRole}`;
+  const label = document.createElement('div');
+  label.className = 'label';
+  label.textContent = safeRole === 'user' ? 'YOU' : 'AGENT';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = String(content ?? '');
+  div.append(label, bubble);
   chatWindowEl.appendChild(div);
   chatWindowEl.scrollTop = chatWindowEl.scrollHeight;
 }
