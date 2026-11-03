@@ -90,21 +90,32 @@ function initCheckRisks() {
 function renderAgentProposal(proposal) {
   const container = document.getElementById("agentBriefContainer");
   container.classList.remove("hidden");
-  document.getElementById("agentDecision").textContent = proposal.decision;
-  document.getElementById("agentBriefText").textContent = proposal.operator_brief;
+  document.getElementById("agentDecision").textContent = typeof proposal.decision === 'string' ? proposal.decision : 'UNKNOWN';
+  document.getElementById("agentBriefText").textContent = typeof proposal.operator_brief === 'string'
+    ? proposal.operator_brief : 'No operator brief is available.';
 
   renderForecastSource(proposal.forecast_bounds);
   renderShapBars(proposal.feature_importance);
   renderGriBar(proposal.validation_result);
 
   const pillRow = document.getElementById("agentPillRow");
-  if (proposal.proposed_action && proposal.proposed_action.action_type !== "NO_ACTION") {
+  const validation = proposal.validation || proposal.validation_result;
+  const activeAction = proposal.proposed_action && proposal.proposed_action.action_type !== "NO_ACTION";
+  const awaitingReview = proposal.decision === 'PENDING_OPERATOR_APPROVAL'
+    && typeof proposal.proposal_id === 'string' && proposal.proposal_id.length > 0;
+  if (activeAction && validation?.valid === true && awaitingReview) {
     pillRow.classList.remove("hidden");
     const approveBtn = document.getElementById("approveBtn");
-    approveBtn.disabled = !proposal.validation_result?.valid;
-    approveBtn.className = "action-btn " + (proposal.validation_result?.valid ? "btn-green" : "btn-dark");
+    approveBtn.disabled = false;
+    approveBtn.dataset.proposalId = proposal.proposal_id;
+    approveBtn.dataset.gridId = getSelectedGrid();
+    approveBtn.className = "action-btn btn-green";
   } else {
     pillRow.classList.add("hidden");
+    const approveBtn = document.getElementById("approveBtn");
+    approveBtn.disabled = true;
+    delete approveBtn.dataset.proposalId;
+    delete approveBtn.dataset.gridId;
   }
 }
 
