@@ -12,7 +12,7 @@ from typing import AsyncIterator, Literal
 import zipfile
 
 import pandapower as pp
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi import HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -21,6 +21,7 @@ from modules.config import runtime_paths, runtime_settings
 from modules.event_store import log_event
 from modules.physics_engine.twin_model import TwinModel
 from modules.physics_engine.grid_metrics import get_resilience_index, get_security_metrics
+from modules.security import require_admin
 
 
 grids: dict[str, TwinModel] = {}
@@ -851,7 +852,7 @@ def get_rl_status() -> dict[str, dict[str, dict[str, object]]]:
     return status
 
 
-@app.post("/change_load/{bus_id}", tags=["actuation"])
+@app.post("/change_load/{bus_id}", tags=["actuation"], dependencies=[Depends(require_admin)])
 def update_grid_load(
     bus_id: int,
     new_mw: float = Query(ge=0.0, allow_inf_nan=False),
@@ -885,7 +886,7 @@ def update_grid_load(
     }
 
 
-@app.post("/inject_fault/{line_id}", tags=["actuation"])
+@app.post("/inject_fault/{line_id}", tags=["actuation"], dependencies=[Depends(require_admin)])
 def trigger_line_fault(line_id: int, grid: str = "39") -> dict[str, str]:
     """Trip one line atomically on the selected IEEE simulation."""
     try:
@@ -909,7 +910,7 @@ def trigger_line_fault(line_id: int, grid: str = "39") -> dict[str, str]:
     }
 
 
-@app.post("/restore_line/{grid}/{line_id}", tags=["actuation"])
+@app.post("/restore_line/{grid}/{line_id}", tags=["actuation"], dependencies=[Depends(require_admin)])
 def restore_line(grid: str, line_id: int) -> dict[str, str]:
     """Restore one line atomically on the requested IEEE simulation."""
     try:
@@ -933,7 +934,7 @@ def restore_line(grid: str, line_id: int) -> dict[str, str]:
     }
 
 
-@app.post("/redispatch_gen/{bus_id}", tags=["actuation"])
+@app.post("/redispatch_gen/{bus_id}", tags=["actuation"], dependencies=[Depends(require_admin)])
 def redispatch_generator(
     bus_id: int,
     delta_mw: float = Query(allow_inf_nan=False),
@@ -979,7 +980,7 @@ def redispatch_generator(
     return {"status": "Command Received", "action": event}
 
 
-@app.post("/redistribute_load/{grid}", tags=["actuation"])
+@app.post("/redistribute_load/{grid}", tags=["actuation"], dependencies=[Depends(require_admin)])
 def redistribute_load(
     grid: str,
     source_bus: int,
@@ -1032,7 +1033,7 @@ def redistribute_load(
     }
 
 
-@app.post("/stress_test/{grid}", tags=["actuation"])
+@app.post("/stress_test/{grid}", tags=["actuation"], dependencies=[Depends(require_admin)])
 def apply_stress_test(grid: str, request: StressTestRequest) -> dict[str, object]:
     """Set absolute load and line-rating multipliers and report modeled collapse."""
     try:

@@ -1,12 +1,11 @@
 """Independent HTTP service for AI-assisted, human-approved grid proposals."""
 
 import asyncio
-from ipaddress import ip_address
 import json
 import math
 import math
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from modules.ai_agents.agent_core import GridState, build_agent_graph
@@ -17,6 +16,7 @@ from modules.ai_agents.twin_client import validate_operator_forecast_features
 from modules.ai_agents import proposal_store
 from modules.event_store import get_events, log_event
 from modules.config import runtime_settings
+from modules.security import require_operator
 
 
 class ProposeRequest(BaseModel):
@@ -224,7 +224,7 @@ def _build_chat_context(grid: str, twin: TwinClient) -> dict:
     return {"grid": grid, "live_metrics": live, "contingency": contingency, "latest_proposal": latest}
 
 
-@app.post("/propose/{grid}")
+@app.post("/propose/{grid}", dependencies=[Depends(require_operator)])
 async def propose(grid: str, payload: ProposeRequest) -> dict:
     if grid not in {"39", "118"}:
         raise HTTPException(status_code=404, detail="Grid not found")
@@ -259,7 +259,7 @@ async def forecast_preview(grid: str, payload: ProposeRequest) -> dict:
         raise HTTPException(status_code=503, detail="Forecast is unavailable") from exc
 
 
-@app.post("/reject/{grid}/{proposal_id}")
+@app.post("/reject/{grid}/{proposal_id}", dependencies=[Depends(require_operator)])
 async def reject_proposal(grid: str, proposal_id: str) -> dict[str, str]:
     if grid not in {"39", "118"}:
         raise HTTPException(status_code=404, detail="Grid not found")
@@ -308,17 +308,6 @@ class ChatRequest(BaseModel):
         return value[-10:]
 
 
-def _require_local_operator() -> None:
-    """Permit writes only on loopback until verified remote identity is implemented."""
-    host = runtime_settings().agent_bind_host
-    try:
-        loopback = host.lower() == "localhost" or ip_address(host).is_loopback
-    except ValueError:
-        loopback = False
-    if not loopback:
-        raise HTTPException(status_code=503, detail="Verified operator identity is required for remote execution")
-
-
 def _execute_action(twin: TwinClient, grid: str, action: dict, fresh_status: dict) -> dict:
     """Map each approved action to its one exact Twin actuation route."""
     amount = action.get("mw_amount")
@@ -343,11 +332,10 @@ def _execute_action(twin: TwinClient, grid: str, action: dict, fresh_status: dic
     raise ValueError("Only validated active actions can be executed")
 
 
-@app.post("/execute/{grid}")
+@app.post("/execute/{grid}", dependencies=[Depends(require_operator)])
 async def execute_proposal(grid: str, request: ExecuteRequest, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128)) -> dict:
     if grid not in {"39", "118"}:
         raise HTTPException(status_code=404, detail="Grid not found")
-    _require_local_operator()
     proposal = proposal_store.get_proposal(request.proposal_id)
     if proposal is None or proposal["grid_id"] != grid:
         raise HTTPException(status_code=404, detail="Proposal not found")
