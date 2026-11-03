@@ -101,6 +101,7 @@ async function loadTopology() {
     ],
   });
   installHoverTooltips();
+  initKeyboardAlternatives(topology.nodes, topology.edges);
   cy.on('tap', 'edge', (event) => {
     toggleLineState(event.target).catch((error) => console.error('Line action failed:', error));
   });
@@ -116,6 +117,9 @@ async function toggleLineState(edge) {
   const nextTripped = !wasTripped;
   edge.data('mutationPending', true);
   edge.data('tripped', nextTripped);
+  const lineSelect = document.getElementById('lineSelect');
+  if (lineSelect) lineSelect.value = lineId;
+  syncLineActionControl();
   applyLineClasses(latestGridState, window.latestContingency);
   const url = nextTripped
     ? `${API_URL}/inject_fault/${encodeURIComponent(lineId)}?grid=${encodeURIComponent(GRID_ID)}`
@@ -129,7 +133,72 @@ async function toggleLineState(edge) {
     throw error;
   } finally {
     edge.data('mutationPending', false);
+    syncLineActionControl();
   }
+}
+
+function initKeyboardAlternatives(nodes, edges) {
+  const busSelect = document.getElementById('busSelect');
+  if (busSelect) {
+    for (const node of nodes) {
+      const option = document.createElement('option');
+      option.value = String(node.data.id);
+      option.textContent = `${node.data.label || `Bus ${node.data.id}`} (${node.data.node_type || 'JUNCTION'})`;
+      busSelect.appendChild(option);
+    }
+    busSelect.addEventListener('change', () => {
+      if (busSelect.value) selectFacility(busSelect.value);
+      else clearFacilitySelection();
+    });
+  }
+  const lineSelect = document.getElementById('lineSelect');
+  if (lineSelect) {
+    for (const edge of edges) {
+      const option = document.createElement('option');
+      option.value = String(edge.data.id).replace(/^line/, '');
+      option.textContent = `Line ${option.value}`;
+      lineSelect.appendChild(option);
+    }
+    lineSelect.addEventListener('change', syncLineActionControl);
+  }
+  const lineButton = document.getElementById('lineActionBtn');
+  if (lineButton) {
+    lineButton.addEventListener('click', async () => {
+      const lineId = lineSelect?.value;
+      const edge = lineId ? cy?.getElementById(`line${lineId}`) : null;
+      const result = document.getElementById('lineActionResult');
+      if (!edge || edge.empty()) {
+        if (result) result.textContent = 'Select a line first.';
+        return;
+      }
+      lineButton.disabled = true;
+      if (result) result.textContent = `Updating line ${lineId}…`;
+      try {
+        await toggleLineState(edge);
+        if (result) result.textContent = `Line ${lineId} ${edge.data('tripped') ? 'tripped' : 'restored'}.`;
+      } catch (error) {
+        if (result) result.textContent = `Line ${lineId} action failed: ${error.message}`;
+      } finally {
+        syncLineActionControl();
+      }
+    });
+  }
+  syncLineActionControl();
+}
+
+function syncLineActionControl() {
+  const selector = document.getElementById('lineSelect');
+  const button = document.getElementById('lineActionBtn');
+  if (!selector || !button) return;
+  const edge = selector.value && cy ? cy.getElementById(`line${selector.value}`) : null;
+  if (!edge || edge.empty()) {
+    button.textContent = 'Trip selected line';
+    button.disabled = true;
+    return;
+  }
+  const tripped = edge.data('tripped') === true;
+  button.textContent = tripped ? 'Restore selected line' : 'Trip selected line';
+  button.disabled = edge.data('mutationPending') === true;
 }
 
 function metricById(collection, id) {
@@ -223,6 +292,8 @@ function renderHighDemandNodes(frame) {
 function selectFacility(busId) {
   if (!/^\d+$/.test(String(busId))) return;
   selectedBus = String(busId);
+  const busSelect = document.getElementById('busSelect');
+  if (busSelect) busSelect.value = selectedBus;
   const panel = document.getElementById('sidePanel');
   if (panel) panel.classList.remove('hidden');
   const toggle = document.getElementById('togglePanelBtn');
@@ -234,6 +305,18 @@ function selectFacility(busId) {
   if (input) input.value = '';
   setText('loadCommandResult', '');
   renderSelectedFacility(latestGridState);
+}
+
+function clearFacilitySelection() {
+  selectedBus = null;
+  setText('targetFacility', 'None Selected');
+  setText('currentLoad', '--- MW');
+  setText('loadCommandResult', '');
+  const input = document.getElementById('loadInput');
+  if (input) {
+    input.value = '';
+    input.placeholder = 'Select a facility first';
+  }
 }
 
 function renderSelectedFacility(frame) {
