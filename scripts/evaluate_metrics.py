@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 from pathlib import Path
@@ -63,12 +64,39 @@ def evaluate_forecasts(data_path: Path | None = None, models_dir: Path | None = 
             "split": "chronological 80/20", "test_rows": len(test), "quantiles": results}
 
 
+def evaluate_rl_logs(models_dir: Path | None = None) -> dict:
+    """Summarize convergence and reward deciles for the four supplied SAC logs."""
+    root = models_dir or PROJECT_ROOT / "models"
+    report = {}
+    for grid in ("39", "118"):
+        for action in ("shed_load", "redispatch_gen"):
+            path = root / f"rl_optimizer_{action}_{grid}_rewards.csv"
+            with path.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            if not rows or not {"reward", "converged"} <= set(rows[0]):
+                raise ValueError(f"reward log is empty or has an invalid schema: {path.name}")
+            rewards = [float(row["reward"]) for row in rows]
+            if any(not math.isfinite(reward) for reward in rewards):
+                raise ValueError(f"reward log contains non-finite values: {path.name}")
+            decile = max(1, math.ceil(len(rewards) / 10))
+            flags = [row["converged"].strip().lower() in {"true", "1", "yes"} for row in rows]
+            report[f"{grid}/{action}"] = {
+                "episodes": len(rewards),
+                "convergence_fraction": sum(flags) / len(flags),
+                "first_decile_mean_reward": statistics.mean(rewards[:decile]),
+                "last_decile_mean_reward": statistics.mean(rewards[-decile:]),
+            }
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path)
     parser.add_argument("--models", type=Path)
+    parser.add_argument("--section", choices=("forecast", "rl"), default="forecast")
     args = parser.parse_args(argv)
-    print(json.dumps(evaluate_forecasts(args.data, args.models), indent=2, allow_nan=False))
+    report = evaluate_forecasts(args.data, args.models) if args.section == "forecast" else evaluate_rl_logs(args.models)
+    print(json.dumps(report, indent=2, allow_nan=False))
     return 0
 
 
