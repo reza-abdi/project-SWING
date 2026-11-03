@@ -141,6 +141,46 @@ def evaluate_rag(db_path: Path | None = None, *, judge: bool = False) -> dict:
             "evaluated": len(results), "results": results}
 
 
+def evaluate_physics(db_path: Path | None = None) -> dict:
+    """Summarize executed proposals and any explicitly persisted validation metrics."""
+    from modules.config import runtime_paths
+
+    database = db_path or runtime_paths().event_db
+    if not database.is_file():
+        return {"total": 0, "action_distribution": {}, "physics_valid_fraction": None,
+                "average_gri_improvement": None, "gri_measurements": 0}
+    with sqlite3.connect(str(database)) as connection:
+        rows = connection.execute(
+            "SELECT event_type, payload FROM events WHERE event_type IN "
+            "('PROPOSAL_EXECUTED','PROPOSAL_REJECTED','PROPOSAL_STALE')"
+        ).fetchall()
+    distribution: dict[str, int] = {}
+    valid_count = total = 0
+    improvements = []
+    for event_type, raw_payload in rows:
+        payload = json.loads(raw_payload)
+        if event_type != "PROPOSAL_EXECUTED":
+            continue
+        action = payload.get("action") if isinstance(payload, dict) else None
+        if not isinstance(action, dict):
+            continue
+        total += 1
+        action_type = str(action.get("action_type", "UNKNOWN"))
+        distribution[action_type] = distribution.get(action_type, 0) + 1
+        validation = payload.get("validation") if isinstance(payload, dict) else None
+        # An executed proposal passed the Twin's fresh-state and physical validation gate.
+        valid_count += int(not isinstance(validation, dict) or validation.get("valid") is True)
+        if isinstance(validation, dict):
+            value = validation.get("gri_improvement")
+            if isinstance(value, (int, float)) and math.isfinite(value):
+                improvements.append(float(value))
+    return {"total": total, "action_distribution": distribution,
+            "physics_valid_fraction": valid_count / total if total else None,
+            "average_gri_improvement": statistics.mean(improvements) if improvements else None,
+            "gri_measurements": len(improvements),
+            "note": "GRI improvement is reported only when persisted with an event."}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path)
@@ -156,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.section == "rag":
         report = evaluate_rag(args.database, judge=args.gemini_judge)
     else:
-        raise SystemExit("physics evaluation is not configured yet")
+        report = evaluate_physics(args.database)
     print(json.dumps(report, indent=2, allow_nan=False))
     return 0
 
