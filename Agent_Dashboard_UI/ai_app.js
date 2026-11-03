@@ -110,12 +110,19 @@ function renderAgentProposal(proposal) {
     approveBtn.dataset.proposalId = proposal.proposal_id;
     approveBtn.dataset.gridId = getSelectedGrid();
     approveBtn.className = "action-btn btn-green";
+    const rejectBtn = document.getElementById('rejectBtn');
+    rejectBtn.disabled = false;
+    rejectBtn.dataset.proposalId = proposal.proposal_id;
+    rejectBtn.dataset.gridId = getSelectedGrid();
   } else {
     pillRow.classList.add("hidden");
     const approveBtn = document.getElementById("approveBtn");
     approveBtn.disabled = true;
     delete approveBtn.dataset.proposalId;
     delete approveBtn.dataset.gridId;
+    const rejectBtn = document.getElementById('rejectBtn');
+    delete rejectBtn.dataset.proposalId;
+    delete rejectBtn.dataset.gridId;
   }
 }
 
@@ -258,6 +265,10 @@ function initAgentActions() {
       document.getElementById('agentDecision').textContent = 'EXECUTED';
       if (brief) brief.textContent = 'The approved simulation action was applied.';
       document.getElementById('agentPillRow').classList.add('hidden');
+      delete button.dataset.proposalId;
+      delete button.dataset.gridId;
+      delete reject.dataset.proposalId;
+      delete reject.dataset.gridId;
       loadEventTimeline();
     } catch (error) {
       if (brief) brief.textContent = `Execution failed: ${error.message}`;
@@ -266,8 +277,35 @@ function initAgentActions() {
     }
   });
 
-  document.getElementById("rejectBtn").addEventListener("click", () => {
-    document.getElementById("agentBriefContainer").classList.add("hidden");
+  document.getElementById("rejectBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const proposalId = button.dataset.proposalId;
+    const grid = getSelectedGrid();
+    const brief = document.getElementById('agentBriefText');
+    if (!proposalId || button.dataset.gridId !== grid) {
+      if (brief) brief.textContent = 'This proposal belongs to another grid or is no longer available.';
+      return;
+    }
+    button.disabled = true;
+    document.getElementById('approveBtn').disabled = true;
+    try {
+      const response = await fetch(`${AI_API_URL}/reject/${grid}/${encodeURIComponent(proposalId)}`, { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `Rejection failed (${response.status})`);
+      document.getElementById('agentDecision').textContent = 'REJECTED';
+      if (brief) brief.textContent = 'The proposal was rejected and cannot be executed.';
+      document.getElementById('agentPillRow').classList.add('hidden');
+      delete button.dataset.proposalId;
+      delete button.dataset.gridId;
+      const approve = document.getElementById('approveBtn');
+      delete approve.dataset.proposalId;
+      delete approve.dataset.gridId;
+      loadEventTimeline();
+    } catch (error) {
+      if (brief) brief.textContent = `Rejection failed: ${error.message}`;
+      button.disabled = false;
+      document.getElementById('approveBtn').disabled = false;
+    }
   });
 }
 
