@@ -8,6 +8,7 @@ let telemetrySocket = null;
 let socketGeneration = 0;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
+let contingencyTimer = null;
 
 const LOAD_ICONS = [
   'icons/factory.png', 'icons/home.png', 'icons/sky-scrappers.png',
@@ -245,6 +246,60 @@ function renderSelectedFacility(frame) {
     ? `Current: ${formatted} MW` : 'Current load unavailable';
 }
 
+function renderContingencyStatus(snapshot) {
+  const status = document.getElementById('contingencyStatus');
+  const detail = document.getElementById('contingencyDetail');
+  if (!status || !detail) return;
+  const state = snapshot?.status;
+  if (!state || state === 'unavailable') {
+    status.textContent = 'First contingency scan pending or unavailable.';
+  } else {
+    const insecure = Number.isInteger(snapshot.insecure_contingency_count)
+      ? snapshot.insecure_contingency_count : 0;
+    status.textContent = state === 'fresh'
+      ? `N-1 scan fresh · ${insecure} insecure contingencies`
+      : `N-1 scan ${state} · ${insecure} insecure contingencies`;
+  }
+  detail.replaceChildren();
+  const lists = [
+    ['Lines', snapshot?.lines],
+    ['Generators', snapshot?.generators],
+  ];
+  for (const [label, entries] of lists) {
+    if (!entries || typeof entries !== 'object') continue;
+    for (const [id, result] of Object.entries(entries)) {
+      if (result?.secure !== false) continue;
+      const row = document.createElement('p');
+      row.className = 'gri-sub badge-amber';
+      const loading = Number.isFinite(result.max_loading_percent)
+        ? ` · ${result.max_loading_percent.toFixed(1)}% loading` : '';
+      row.textContent = `${label.slice(0, -1)} ${id} insecure${loading}`;
+      detail.appendChild(row);
+    }
+  }
+}
+
+async function refreshContingency() {
+  try {
+    const response = await fetch(`${API_URL}/contingency/${encodeURIComponent(GRID_ID)}`);
+    if (!response.ok) throw new Error(`Contingency request failed (${response.status})`);
+    const snapshot = await response.json();
+    window.latestContingency = snapshot;
+    renderContingencyStatus(snapshot);
+    applyLineClasses(latestGridState, snapshot);
+  } catch (_error) {
+    window.latestContingency = null;
+    renderContingencyStatus({ status: 'unavailable' });
+    applyLineClasses(latestGridState, null);
+  }
+}
+
+function startContingencyPolling() {
+  if (contingencyTimer !== null) window.clearInterval(contingencyTimer);
+  refreshContingency();
+  contingencyTimer = window.setInterval(refreshContingency, 15000);
+}
+
 function responseMessage(text, status) {
   try {
     const payload = JSON.parse(text);
@@ -389,8 +444,9 @@ function installHoverTooltips() {
 }
 
 function applyLineClasses(telemetry, contingency) {
-  if (!cy || !Array.isArray(telemetry?.lines)) return;
-  const lineMetrics = new Map(telemetry.lines
+  if (!cy) return;
+  const lines = Array.isArray(telemetry?.lines) ? telemetry.lines : [];
+  const lineMetrics = new Map(lines
     .filter((line) => line && Number.isInteger(Number(line.id)))
     .map((line) => [String(line.id), line]));
   const contingencyLines = contingency?.lines && typeof contingency.lines === 'object'
@@ -464,3 +520,4 @@ loadTopology()
   .catch((error) => console.error('Could not load grid topology:', error));
 initLoadCommand();
 initStressControls();
+startContingencyPolling();
