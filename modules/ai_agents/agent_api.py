@@ -125,6 +125,33 @@ def _default_graph_runner(grid: str, payload: dict) -> dict:
     }
 
 
+def _forecast_preview_runner(grid: str, telemetry: dict) -> dict:
+    """Run only observer/forecast nodes; this read-only path cannot create proposals."""
+    from modules.ai_agents.agent_core import lightgbm_fallback_node, observer_node, tft_forecasting_node
+
+    state = GridState(
+        grid_id=grid,
+        telemetry=dict(telemetry),
+        telemetry_source="operator" if telemetry else "unavailable",
+    )
+    observed = observer_node(state, TwinClient())
+    state = state.model_copy(update=observed)
+    prediction = tft_forecasting_node(state)
+    state = state.model_copy(update=prediction)
+    fallback = lightgbm_fallback_node(state)
+    state = state.model_copy(update=fallback)
+    return {
+        "grid_id": grid,
+        "forecast": {
+            "source": state.forecast_source,
+            "input_source": state.forecast_input_source,
+            "bounds": state.forecast_bounds,
+            "error": state.forecast_error,
+        },
+        "feature_importance": state.feature_importance,
+    }
+
+
 _graph_runner = _default_graph_runner
 
 
@@ -219,6 +246,17 @@ async def propose(grid: str, payload: ProposeRequest) -> dict:
         raise HTTPException(status_code=422, detail="Invalid proposal input") from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Decision support is unavailable") from exc
+
+
+@app.post("/forecast/{grid}")
+async def forecast_preview(grid: str, payload: ProposeRequest) -> dict:
+    """Read-only forecast inference; does not invoke an LLM, optimizer, or proposal store."""
+    if grid not in {"39", "118"}:
+        raise HTTPException(status_code=404, detail="Grid not found")
+    try:
+        return await asyncio.to_thread(_forecast_preview_runner, grid, payload.telemetry)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Forecast is unavailable") from exc
 
 
 @app.post("/reject/{grid}/{proposal_id}")

@@ -85,7 +85,7 @@ function fetchAndRenderForecast() {
     load_lag_1: 0.85, load_lag_2: 0.86, load_lag_24: 0.82, Northern_Region_Avg_T2M: 32.5
   };
 
-  fetch(`${AI_API_URL}/propose/${getSelectedGrid()}`, {
+  fetch(`${AI_API_URL}/forecast/${getSelectedGrid()}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ telemetry: mockTelemetry })
