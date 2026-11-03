@@ -36,39 +36,57 @@ function appendMessage(role, content) {
   chatWindowEl.scrollTop = chatWindowEl.scrollHeight;
 }
 
-function sendMessage(messageOverride) {
+function appendChatError(message) {
+  const chatWindowEl = document.getElementById('chatWindow');
+  const error = document.createElement('div');
+  error.className = 'chat-error badge-red';
+  error.setAttribute('role', 'alert');
+  error.textContent = `Chat service error: ${message}`;
+  chatWindowEl.appendChild(error);
+  chatWindowEl.scrollTop = chatWindowEl.scrollHeight;
+}
+
+async function sendMessage(messageOverride) {
   const input = document.getElementById("chatInput");
   const btn = document.getElementById("sendBtn");
-  const message = messageOverride || input.value.trim();
-  if (!message) return;
+  const message = typeof messageOverride === 'string' ? messageOverride.trim() : input.value.trim();
+  if (!message || btn.disabled) return;
+  if (message.length > 4000) {
+    appendChatError('Please keep messages under 4,000 characters.');
+    return;
+  }
 
   appendMessage("user", message);
   chatHistory.push({ role: "user", content: message });
+  chatHistory = chatHistory.slice(-20);
   input.value = "";
   btn.disabled = true;
   btn.textContent = "Thinking...";
-
-  fetch(`${AI_API_URL}/chat/${getSelectedGrid()}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history: chatHistory })
-  })
-    .then(async (res) => {
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Chat request failed");
-      return data;
-    })
-    .then(data => {
-      appendMessage("assistant", data.response);
-      chatHistory.push({ role: "assistant", content: data.response });
-    })
-    .catch(err => {
-      appendMessage("assistant", `Could not reach the AI Architecture service: ${err.message}`);
-    })
-    .finally(() => {
-      btn.disabled = false;
-      btn.textContent = "Send";
+  input.disabled = true;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(`${AI_API_URL}/chat/${getSelectedGrid()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history: chatHistory.slice(-20) }),
+      signal: controller.signal,
     });
+    let data;
+    try { data = await response.json(); } catch (_error) { throw new Error('The service returned an invalid response.'); }
+    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `Request failed (${response.status})`);
+    if (typeof data.answer !== 'string' || !data.answer.trim()) throw new Error('The service returned no answer.');
+    appendMessage('assistant', data.answer);
+    chatHistory.push({ role: 'assistant', content: data.answer });
+    chatHistory = chatHistory.slice(-20);
+  } catch (error) {
+    appendChatError(error.name === 'AbortError' ? 'The request timed out. Please try again.' : error.message);
+  } finally {
+    window.clearTimeout(timeout);
+    btn.disabled = false;
+    input.disabled = false;
+    btn.textContent = 'Send';
+  }
 }
 
 window.addEventListener("DOMContentLoaded", () => {
