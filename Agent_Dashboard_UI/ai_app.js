@@ -43,6 +43,7 @@ function initCheckRisks() {
     briefContainer.classList.add("hidden"); // Hide previous results
 
     btn.textContent = "Running Agent Pipeline...";
+    loader.setAttribute('aria-label', 'Running with clearly labeled demo telemetry values');
 
     const now = new Date();
     const mockTelemetry = {
@@ -59,16 +60,24 @@ function initCheckRisks() {
     fetch(`${AI_API_URL}/propose/${getSelectedGrid()}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(mockTelemetry)
+      body: JSON.stringify({ telemetry: mockTelemetry })
     })
-      .then(res => res.json())
-      .then(data => {
+      .then(async (res) => {
+        let data;
+        try { data = await res.json(); } catch (_error) { throw new Error(`AI service returned invalid JSON (${res.status})`); }
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `AI service request failed (${res.status})`);
+        return data;
+      })
+      .then((data) => {
         renderAgentProposal(data);
         loadEventTimeline(); // the propose call just logged an event -- reflect it
       })
-      .catch(err => {
-        console.error(err);
-        alert(`Could not reach AI Architecture service: ${err.message}`);
+      .catch((error) => {
+        const container = document.getElementById('agentBriefContainer');
+        container.classList.remove('hidden');
+        document.getElementById('agentDecision').textContent = 'AGENT_UNAVAILABLE';
+        document.getElementById('agentBriefText').textContent = `Decision support failed: ${error.message}`;
+        document.getElementById('agentPillRow').classList.add('hidden');
       })
       .finally(() => {
         btn.disabled = false;
