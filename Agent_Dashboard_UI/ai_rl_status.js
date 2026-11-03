@@ -19,39 +19,51 @@ const ACTION_LABELS = { "shed_load": "SHED_LOAD", "redispatch_gen": "REDISPATCH_
 
 function renderPolicyGrid(status) {
   const el = document.getElementById("policyGrid");
-  let html = "";
+  const fragment = document.createDocumentFragment();
 
   for (const grid of Object.keys(GRID_LABELS)) {
     for (const action of Object.keys(ACTION_LABELS)) {
-      const info = status[grid]?.[action] || { trained: false };
-      html += `
-        <div class="policy-card">
-          <h3>${GRID_LABELS[grid]} -- ${ACTION_LABELS[action]}</h3>
-          ${info.trained
-            ? `
-              <div class="status-line badge-green">&#9679; Trained and active</div>
-              <div class="status-line">Size: ${info.size_kb} KB</div>
-              <div class="status-line">Last trained: ${new Date(info.last_trained).toLocaleString()}</div>
-            `
-            : `
-              <div class="status-line badge-amber">&#9679; Not trained yet</div>
-              <div class="status-line">Falling back to bisection search for this combination.</div>
-            `
-          }
-        </div>
-      `;
+      const info = status?.[grid]?.[action.toLowerCase()] || status?.[grid]?.[action] || { error: "missing" };
+      const card = document.createElement("div");
+      card.className = "policy-card";
+      const heading = document.createElement("h3");
+      heading.textContent = `${GRID_LABELS[grid]} -- ${ACTION_LABELS[action]}`;
+      card.append(heading);
+
+      const state = document.createElement("div");
+      state.className = `status-line ${info.trained ? "badge-green" : info.error === "missing" ? "badge-amber" : "badge-red"}`;
+      state.textContent = info.trained ? "● Trained and active" : info.error === "missing" ? "● Not trained yet" : "● Incompatible or unavailable";
+      card.append(state);
+      if (info.trained) {
+        const size = document.createElement("div");
+        size.className = "status-line";
+        size.textContent = Number.isFinite(info.size_kb) ? `Size: ${info.size_kb} KB` : "Size: unavailable";
+        const trained = document.createElement("div");
+        trained.className = "status-line";
+        const timestamp = Date.parse(info.last_trained || "");
+        trained.textContent = Number.isFinite(timestamp) ? `Last trained: ${new Date(timestamp).toLocaleString()}` : "Last trained: unavailable";
+        card.append(size, trained);
+      } else {
+        const detail = document.createElement("div");
+        detail.className = "status-line";
+        detail.textContent = "Falling back to bisection search for this combination.";
+        card.append(detail);
+      }
+      fragment.append(card);
     }
   }
 
-  el.innerHTML = html;
+  el.replaceChildren(fragment);
 }
 
 window.addEventListener("DOMContentLoaded", () => {
   fetch(`${DIGITAL_TWIN_API_URL}/rl_status`)
-    .then(res => res.json())
+    .then(res => { if (!res.ok) throw new Error("RL status request failed"); return res.json(); })
     .then(status => renderPolicyGrid(status))
     .catch(() => {
-      document.getElementById("policyGrid").innerHTML =
-        `<p class="status-line badge-red">Could not reach the Digital Twin API -- is api.py running?</p>`;
+      const message = document.createElement("p");
+      message.className = "status-line badge-red";
+      message.textContent = "Could not reach the Digital Twin API.";
+      document.getElementById("policyGrid").replaceChildren(message);
     });
 });
