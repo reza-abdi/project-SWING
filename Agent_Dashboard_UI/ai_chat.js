@@ -15,6 +15,8 @@ function publicServiceBase(configKey, globalKey, localPort) {
 const AI_API_URL = publicServiceBase('agentApiBase', 'SWING_PUBLIC_AGENT_API_BASE', 8002);
 
 let chatHistory = [];
+let chatGeneration = 0;
+let pendingChatController = null;
 
 function getSelectedGrid() {
   return document.getElementById("gridSelect").value;
@@ -64,9 +66,12 @@ async function sendMessage(messageOverride) {
   btn.textContent = "Thinking...";
   input.disabled = true;
   const controller = new AbortController();
+  const generation = chatGeneration;
+  const requestGrid = getSelectedGrid();
+  pendingChatController = controller;
   const timeout = window.setTimeout(() => controller.abort(), 20000);
   try {
-    const response = await fetch(`${AI_API_URL}/chat/${getSelectedGrid()}`, {
+    const response = await fetch(`${AI_API_URL}/chat/${requestGrid}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, history: chatHistory.slice(-20) }),
@@ -74,19 +79,40 @@ async function sendMessage(messageOverride) {
     });
     let data;
     try { data = await response.json(); } catch (_error) { throw new Error('The service returned an invalid response.'); }
+    if (generation !== chatGeneration) return;
     if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `Request failed (${response.status})`);
     if (typeof data.answer !== 'string' || !data.answer.trim()) throw new Error('The service returned no answer.');
     appendMessage('assistant', data.answer);
     chatHistory.push({ role: 'assistant', content: data.answer });
     chatHistory = chatHistory.slice(-20);
   } catch (error) {
-    appendChatError(error.name === 'AbortError' ? 'The request timed out. Please try again.' : error.message);
+    if (generation === chatGeneration) {
+      appendChatError(error.name === 'AbortError' ? 'The request timed out. Please try again.' : error.message);
+    }
   } finally {
     window.clearTimeout(timeout);
-    btn.disabled = false;
-    input.disabled = false;
-    btn.textContent = 'Send';
+    if (generation === chatGeneration) {
+      pendingChatController = null;
+      btn.disabled = false;
+      input.disabled = false;
+      btn.textContent = 'Send';
+    }
   }
+}
+
+function resetChatForGrid() {
+  chatGeneration += 1;
+  if (pendingChatController) pendingChatController.abort();
+  pendingChatController = null;
+  chatHistory = [];
+  const input = document.getElementById('chatInput');
+  input.value = '';
+  input.disabled = false;
+  const button = document.getElementById('sendBtn');
+  button.disabled = false;
+  button.textContent = 'Send';
+  document.getElementById('chatWindow').replaceChildren();
+  appendMessage('assistant', `Switched to IEEE ${getSelectedGrid()} context. Ask me about this grid.`);
 }
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -98,12 +124,6 @@ window.addEventListener("DOMContentLoaded", () => {
     chip.addEventListener("click", () => sendMessage(chip.dataset.q));
   });
   document.getElementById("gridSelect").addEventListener("change", () => {
-    chatHistory = [];
-    document.getElementById("chatWindow").innerHTML = `
-      <div class="chat-msg assistant">
-        <div class="label">AGENT</div>
-        <div class="bubble">Switched grid context. Ask me anything about the current situation.</div>
-      </div>
-    `;
+    resetChatForGrid();
   });
 });
