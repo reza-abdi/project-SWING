@@ -96,7 +96,7 @@ function renderAgentProposal(proposal) {
 
   renderForecastSource(proposal.forecast_bounds);
   renderShapBars(proposal.feature_importance);
-  renderGriBar(proposal.validation_result);
+  renderGriBar(proposal.validation || proposal.validation_result);
 
   const pillRow = document.getElementById("agentPillRow");
   const validation = proposal.validation || proposal.validation_result;
@@ -184,42 +184,43 @@ function renderShapBars(featureImportance) {
 
 function renderGriBar(validationResult) {
   const el = document.getElementById("griBarContainer");
-
-  // Keep your existing safety check for the base case
-  if (!validationResult || validationResult.gri_before === null || validationResult.gri_before === undefined) {
-    el.innerHTML = "";
+  el.replaceChildren();
+  const before = validationResult?.gri_before;
+  const after = validationResult?.gri_after;
+  const improvement = validationResult?.gri_improvement;
+  const finiteBefore = typeof before === 'number' && Number.isFinite(before);
+  const finiteAfter = typeof after === 'number' && Number.isFinite(after);
+  const finiteChange = typeof improvement === 'number' && Number.isFinite(improvement);
+  if (!finiteBefore) {
+    el.textContent = 'Grid resilience measurements are unavailable.';
     return;
   }
 
-  const before = validationResult.gri_before;
-  const after = validationResult.gri_after;
-  const improvement = validationResult.gri_improvement;
-
-  // Safely handle the non-convergent (null) cases
-  const afterStr = after !== null ? after.toFixed(1) : "N/A";
-  const improvementStr = improvement !== null
-    ? `(${improvement >= 0 ? "+" : ""}${improvement.toFixed(1)})`
-    : "(N/A)";
-
-  // Only turn it green if it actually improved AND didn't collapse
-  const improved = after !== null && after >= before;
-
-  el.innerHTML = `
-    <div style="display:flex; align-items:center; gap:14px; margin-top:6px;">
-      <div style="text-align:center;">
-        <div style="font-size:11px; color:var(--text-dim);">BEFORE</div>
-        <div style="font-size:20px; font-weight:bold;">${before.toFixed(1)}</div>
-      </div>
-      <div style="font-size:18px; color:var(--text-dim);">&rarr;</div>
-      <div style="text-align:center;">
-        <div style="font-size:11px; color:var(--text-dim);">AFTER</div>
-        <div style="font-size:20px; font-weight:bold; color:${improved ? 'var(--accent-green)' : 'var(--accent-red)'};">${afterStr}</div>
-      </div>
-      <div style="font-size:13px; color:${improved ? 'var(--accent-green)' : 'var(--accent-red)'};">
-        ${improvementStr}
-      </div>
-    </div>
-  `;
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:14px;margin-top:6px;';
+  const makeValue = (label, value, color) => {
+    const group = document.createElement('div');
+    group.style.textAlign = 'center';
+    const heading = document.createElement('div');
+    heading.style.cssText = 'font-size:11px;color:var(--text-dim);';
+    heading.textContent = label;
+    const number = document.createElement('div');
+    number.style.cssText = `font-size:20px;font-weight:bold;color:${color};`;
+    number.textContent = value === null ? 'N/A' : value.toFixed(1);
+    group.append(heading, number);
+    return group;
+  };
+  row.appendChild(makeValue('BEFORE', before, 'var(--text-primary)'));
+  const arrow = document.createElement('span');
+  arrow.textContent = '→';
+  arrow.style.color = 'var(--text-dim)';
+  row.appendChild(arrow);
+  row.appendChild(makeValue('AFTER', finiteAfter ? after : null, finiteChange && improvement > 0 ? 'var(--accent-green)' : finiteChange && improvement < 0 ? 'var(--accent-red)' : 'var(--accent-amber)'));
+  const change = document.createElement('span');
+  change.textContent = finiteChange ? `${improvement >= 0 ? '+' : ''}${improvement.toFixed(1)}` : 'Change unavailable';
+  change.style.cssText = `font-size:13px;color:${finiteChange && improvement > 0 ? 'var(--accent-green)' : finiteChange && improvement < 0 ? 'var(--accent-red)' : 'var(--accent-amber)'};`;
+  row.appendChild(change);
+  el.appendChild(row);
 }
 
 function initAgentActions() {
