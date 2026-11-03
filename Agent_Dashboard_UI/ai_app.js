@@ -314,29 +314,54 @@ function initAgentActions() {
 // ------------------------------------------------------------
 function loadEventTimeline() {
   const el = document.getElementById("eventTimeline");
-  fetch(`${AI_API_URL}/events/${getSelectedGrid()}?limit=30`)
-    .then(res => res.json())
+  const grid = getSelectedGrid();
+  fetch(`${AI_API_URL}/events/${grid}?limit=30`)
+    .then(async (res) => {
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `Events failed (${res.status})`);
+      return data;
+    })
     .then(data => {
-      const events = data.events || [];
+      if (grid !== getSelectedGrid()) return;
+      const events = Array.isArray(data.events) ? data.events : [];
+      el.replaceChildren();
       if (!events.length) {
-        el.innerHTML = `<p class="gri-sub">No events yet for this grid.</p>`;
+        const empty = document.createElement('p');
+        empty.className = 'gri-sub';
+        empty.textContent = 'No events yet for this grid.';
+        el.appendChild(empty);
         return;
       }
-      el.innerHTML = events.map(ev => {
-        const date = new Date(ev.timestamp * 1000).toLocaleTimeString();
-        const payloadSummary = JSON.stringify(ev.payload).slice(0, 120);
-        return `
-          <div class="timeline-entry source-${ev.source}">
-            <span class="ts">${date}</span> --
-            <span class="type">${ev.event_type}</span>
-            <span class="gri-sub">(${ev.source})</span>
-            <div class="gri-sub">${payloadSummary}</div>
-          </div>
-        `;
-      }).join("");
+      for (const item of events) {
+        const entry = document.createElement('div');
+        const sourceClass = item.source === 'ai' ? 'source-ai' : item.source === 'digital_twin' ? 'source-digital_twin' : 'source-other';
+        entry.className = `timeline-entry ${sourceClass}`;
+        const timestamp = document.createElement('span');
+        timestamp.className = 'ts';
+        timestamp.textContent = typeof item.timestamp === 'number' && Number.isFinite(item.timestamp)
+          ? new Date(item.timestamp * 1000).toLocaleTimeString() : 'Time unavailable';
+        const type = document.createElement('span');
+        type.className = 'type';
+        type.textContent = typeof item.event_type === 'string' ? item.event_type : 'Unknown event';
+        const source = document.createElement('span');
+        source.className = 'gri-sub';
+        source.textContent = `(${typeof item.source === 'string' ? item.source : 'unknown source'})`;
+        const payload = document.createElement('div');
+        payload.className = 'gri-sub';
+        let summary;
+        try { summary = JSON.stringify(item.payload); } catch (_error) { summary = null; }
+        payload.textContent = typeof summary === 'string' ? summary.slice(0, 120) : 'Payload unavailable';
+        entry.append(timestamp, document.createTextNode(' — '), type, document.createTextNode(' '), source, payload);
+        el.appendChild(entry);
+      }
     })
     .catch(() => {
-      el.innerHTML = `<p class="gri-sub badge-red">Could not load event timeline.</p>`;
+      if (grid !== getSelectedGrid()) return;
+      el.replaceChildren();
+      const error = document.createElement('p');
+      error.className = 'gri-sub badge-red';
+      error.textContent = 'Could not load event timeline.';
+      el.appendChild(error);
     });
 }
 
