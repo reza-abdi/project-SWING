@@ -1,0 +1,43 @@
+name: Python CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SWING_AUTH_MODE: disabled_local_only
+      SWING_OPERATION_MODE: simulation
+      SWING_EVENT_DB_PATH: ${{ runner.temp }}/swing-events.sqlite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install runtime and CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest ruff
+      - name: Compile Python sources
+        run: python -m compileall -q modules scripts tests
+      - name: Lint Python sources
+        run: ruff check modules scripts tests
+      - name: Run unit, physics, agent, model, and evaluation suites
+        run: >-
+          pytest -q
+          tests/unit tests/physics tests/agents tests/forecasting tests/optimization
+          tests/rag tests/data tests/evaluation tests/security
+          tests/integration
+          tests/api/test_twin_contingency.py
+          tests/api/test_twin_optimization.py
+          tests/api/test_twin_validation.py
