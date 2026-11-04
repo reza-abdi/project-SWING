@@ -1,0 +1,12 @@
+{
+  "name": "project-swing-ui-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Development-only browser regression tests for static Project SWING interfaces",
+  "scripts": {
+    "test:ui": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}
