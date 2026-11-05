@@ -1,0 +1,54 @@
+name: Dependency and Secret Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      generate_sbom:
+        description: Generate local Python and npm CycloneDX SBOM files
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Scan tracked source and fake credential fixture
+        run: python scripts/security_audit.py --tracked --self-test
+      - name: Install audit tools
+        run: python -m pip install --upgrade pip pip-audit
+      - name: Audit pinned Python dependencies
+        run: pip-audit --requirement requirements.txt
+      - name: Install locked JavaScript dependencies
+        run: npm ci
+      - name: Audit locked JavaScript dependencies
+        run: npm audit --audit-level=high
+      - name: Generate optional CycloneDX SBOMs
+        if: github.event_name == 'workflow_dispatch' && inputs.generate_sbom
+        run: |
+          python -m pip install cyclonedx-bom
+          cyclonedx-py requirements requirements.txt --output-reproducible --output-file /tmp/python-sbom.json
+          npm sbom --sbom-format cyclonedx > /tmp/npm-sbom.json
+      - name: Upload optional SBOMs
+        if: success() && github.event_name == 'workflow_dispatch' && inputs.generate_sbom
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-sboms
+          path: /tmp/*-sbom.json
+          if-no-files-found: error
+          retention-days: 7
