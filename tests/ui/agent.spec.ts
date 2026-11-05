@@ -6,6 +6,9 @@ const root = process.cwd();
 const agentOrigin = 'http://agent.local';
 
 async function serveAgent(page) {
+  await page.route('https://cdn.jsdelivr.net/**', (route) =>
+    route.fulfill({ contentType: 'text/javascript', body: '/* Chart is stubbed by addInitScript. */' }),
+  );
   await page.route(`${agentOrigin}/**`, async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     const file = path.join(root, 'Agent_Dashboard_UI', pathname === '/' ? 'ai_home.html' : pathname.slice(1));
