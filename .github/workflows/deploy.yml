@@ -1,0 +1,72 @@
+name: Manual single-host deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit to deploy
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-swing-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Configure required reviewers and secrets on this GitHub environment before use.
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run credential-free deployment preflight
+        run: python scripts/validate_deployment.py
+      - name: Configure pinned SSH host identity
+        env:
+          DEPLOY_PRIVATE_KEY: ${{ secrets.DEPLOY_PRIVATE_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d "$RUNNER_TEMP/swing-ssh"
+          printf '%s\n' "$DEPLOY_PRIVATE_KEY" > "$RUNNER_TEMP/swing-ssh/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$RUNNER_TEMP/swing-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/swing-ssh/key" "$RUNNER_TEMP/swing-ssh/known_hosts"
+      - name: Copy source to the approved deployment host
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          test -n "$DEPLOY_HOST" && test -n "$DEPLOY_USER" && test -n "$DEPLOY_PATH"
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$DEPLOY_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]]
+          [[ "$DEPLOY_PATH" != *..* ]]
+          rsync -az --delete \
+            --exclude='.git/' --exclude='.env' --exclude='deploy/certs/' \
+            --exclude='node_modules/' --exclude='.venv/' --exclude='test-results/' \
+            -e "ssh -i $RUNNER_TEMP/swing-ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/swing-ssh/known_hosts -o StrictHostKeyChecking=yes" \
+            ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+      - name: Build, start, and run host-local read-only smoke checks
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          ssh -i "$RUNNER_TEMP/swing-ssh/key" -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/swing-ssh/known_hosts" -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && docker compose config >/dev/null && docker compose up -d --build && docker compose exec -T proxy nginx -t && curl --fail --silent --show-error --resolve swing.example.com:8443:127.0.0.1 --cacert deploy/certs/fullchain.pem https://swing.example.com:8443/api/twin/health && curl --fail --silent --show-error --resolve swing.example.com:8443:127.0.0.1 --cacert deploy/certs/fullchain.pem https://swing.example.com:8443/api/agent/health"
+      - name: Remove temporary SSH material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/swing-ssh"
