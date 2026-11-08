@@ -84,6 +84,8 @@ services:
 
 volumes:
   swing-state:
+    name: ${SWING_STATE_VOLUME:-project-swing-state}
+    driver: local
 
 networks:
   backend:

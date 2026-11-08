@@ -24,6 +24,9 @@ dist/
 # Runtime state and temporary output
 *.db
 *.sqlite3
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 *.db-wal
 *.db-shm
 *.sqlite3-wal
@@ -31,6 +34,7 @@ dist/
 *.log
 logs/
 models/generated/
+deploy/certs/
 *.ckpt.tmp
 *.zip.tmp
 
