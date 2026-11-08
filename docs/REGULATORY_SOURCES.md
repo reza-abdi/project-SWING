@@ -1,13 +1,7 @@
-# Regulatory source and provenance
+# Regulatory sources
 
-## Supplied IEGC PDF
+The bundled `data/knowledge_base/IEGC_Code.pdf` is a copy of the Indian Electricity Grid Code published by India's Central Electricity Regulatory Commission (CERC). It is included as a source document for research and simulation context, not as legal advice or an indication of CERC endorsement. Keep the original PDF's title, publisher identity, and notices with any redistribution.
 
-The repository includes `data/knowledge_base/IEGC_Code.pdf`, a 212-page, archive-provided copy of the **Central Electricity Regulatory Commission (Indian Electricity Grid Code) Regulations, 2023**. The front matter identifies the Central Electricity Regulatory Commission, New Delhi, reference `L-1/265/2022/CERC`, dated 29 May 2023. The regulations' short title appears in the notification on page 4.
+The project owner authorized public distribution of the supplied archive. No independent permission statement or license specific to the PDF was present in the archive. Check the current CERC publication and applicable government reuse terms before commercial reuse or republishing excerpts. The PDF is excluded from claims that the application license grants rights over third-party material.
 
-This records the supplied file's identity and provenance only. It does not establish that the copy is the currently effective or complete legal text, an official publication, or licensed for redistribution. Before relying on it operationally or redistributing it, verify the current authoritative CERC publication, subsequent amendments and commencement notifications, and applicable rights and notices.
-
-## Use in retrieval and generated answers
-
-RAG results must retain the source filename and page number for every excerpt. If retrieval cannot provide verifiable provenance, the application must mark the regulatory context unavailable and must not present an answer as source-grounded.
-
-An LLM paraphrase, retrieval match, or citation does not constitute legal advice, regulatory approval, or certification of grid-code compliance. Operators must consult the authoritative text and qualified counsel or compliance staff for legal interpretation.
+The source PDF's SHA-256 is recorded in `scripts/check_source_manifest.py`. Retrieval must use a rebuilt or separately hash-verified index; the supplied FAISS pickle is not trusted for automatic deserialization.
