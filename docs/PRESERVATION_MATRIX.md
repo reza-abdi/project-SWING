@@ -19,6 +19,17 @@ The read-only `Project_SWING.zip` contains **80 application files** after exclud
 
 The full per-file archive list and SHA-256 comparison are available through `scripts/check_source_manifest.py`. Record deliberate edits with its `--transformations` map and in this matrix as work proceeds. Byte-for-byte hashes matter for curated data and original binary assets; reviewed source fixes may intentionally differ from the archive.
 
+## Phase N/O delivery status
+
+- Dockerfiles, Compose wiring, Nginx routes/TLS template, secret guidance, rollback instructions, manual deployment workflow, deployment contract checks, final README, changelog, attribution notes, and a deployment report are implemented.
+- Same-origin public API/WebSocket fallbacks are implemented. The Digital Twin frontend test harness was corrected to exercise `/api/twin/...`; all seven Playwright tests pass in this environment when Chromium is granted its required macOS process permissions.
+- `scripts/validate_deployment.py`, JavaScript syntax checks, YAML syntax parsing, `git diff --check`, and the tracked secret audit pass. The secret audit reports zero findings; pip advisory status is not checked because `pip-audit` is unavailable.
+- Docker/Nginx builds, Compose schema validation, full Python tests, trusted model inference, live SQLite persistence/rollback, and any host deployment remain unverified. This execution environment has no Docker/Nginx and its checked-in Python 3.12 venv has lost its standard library; system Python 3.9 is insufficient for the project suite.
+- A remote dashboard login flow is still absent. Static bearer-token API auth exists, but OIDC/session configuration variables are reserved. Public write-enabled browser use is therefore a release gate.
+- The supplied archive owner's public redistribution permission is recorded. Third-party commercial-use terms for the PDF, data, models, and media have not been independently established.
+
+The 19 curated dataset, model, and regulatory artifacts listed in `docs/ARTIFACT_MANIFEST.json` matched their SHA-256 values in the supplied source archive during reconstruction. This establishes byte parity only; it does not establish third-party licensing, trust in pickle deserialization, or inference compatibility.
+
 ## Intentional omissions and deviations
 
 - Never import the archive's `.git/` history, `node_modules/` metadata, Python caches, local SQLite databases, logs, or secrets.
@@ -26,3 +37,5 @@ The full per-file archive list and SHA-256 comparison are available through `scr
 - Destination `.gitignore` extends the source rules to protect runtime state and secrets.
 - Package marker files, central configuration, tests, and safety documentation are new reconstruction infrastructure, not claimed source files.
 - No scientific or runtime behavior deviation has been accepted yet. Add a specific entry here before any such change is described as complete.
+- The deployment image omits the provided FAISS index and pickle until a trusted manifest and rebuilt/verified artifact are available; retrieval may be unavailable in the container profile.
+- Remote browser clients do not yet acquire or send the configured static bearer token. This is an intentional fail-closed limitation pending an identity/login design, not an assertion that remote dashboard writes work.

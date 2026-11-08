@@ -1,0 +1,24 @@
+{
+  "archive": "Project_SWING.zip",
+  "sha256": {
+    "data/knowledge_base/IEGC_Code.pdf": "65d15233dd34ecf4d5bc5a898e47034d0349e7c59404de258cc062633fba2e25",
+    "data/knowledge_base/faiss_index/index.faiss": "4bffd51f996e1ba2be4a1ccd480acef3fade77917b114104e37b0aa266b32f16",
+    "data/knowledge_base/faiss_index/index.pkl": "fe072225d4e019e11d92682a4de65e9a963e37667a2f697f2c30fceca806bff0",
+    "data/processed_data/tft_ready_data.csv": "e8baee3e109327ee7faa53b9b054f15c1eb270b1de88ca52670361f3464bb6bb",
+    "data/raw_data/Northern_Region_Hourly_Weather_2019_2024.csv": "8bf0cf172db39435eeec1021b61d0086e79ed16ac5c252a4ea4532cbb8be7227",
+    "data/raw_data/hourlyLoadDataIndia.csv": "072db545cba1b682c45867b7c101a3e179ef6025b9e4c19b96b2b1f8df34f44c",
+    "models/lightgbm_q_10.txt": "024d566989d354f28fba262999d18d13c7830ca531ef7bf3c43aa6d22590fd5d",
+    "models/lightgbm_q_50.txt": "69f48158c23f123f8739720a0836db2a2723369387b8ae0741f65995f702e7ef",
+    "models/lightgbm_q_90.txt": "c8eb33e3ddd59dbe5d0db5b304e0eda55a02e84838613391ffecbb2790faea69",
+    "models/rl_optimizer_redispatch_gen_118.zip": "72f4857a816394ed3ee72d40b06a751c516166a7ce64cbdf21c7000c70ef7868",
+    "models/rl_optimizer_redispatch_gen_118_rewards.csv": "05febd115119b4bde101a5d15ed0814d37b863a1d1b9af632fc672e3208eeb7e",
+    "models/rl_optimizer_redispatch_gen_39.zip": "b9ddb770326c971a93a3fcdb3290c4bbe78854d6e407ebf39f7ec96453a3cdb3",
+    "models/rl_optimizer_redispatch_gen_39_rewards.csv": "851993f515ec3c9a2d37c6bf5670056fbdc1a65d2605dc4bd65e2a934822af5f",
+    "models/rl_optimizer_shed_load_118.zip": "8eb183bc6324ebbfa168efcf876c245ddd834fb8c9cb8be4d06640124c9bc853",
+    "models/rl_optimizer_shed_load_118_rewards.csv": "d136c97ba4923186a8166a5602d4c5aeaf64043bc7bdcd20caaa1cbdd80aaeb7",
+    "models/rl_optimizer_shed_load_39.zip": "06cadc918770d616d42393eb19399f06bbbf7a51d1bba058709d2444bcb0baff",
+    "models/rl_optimizer_shed_load_39_rewards.csv": "6ecc8dac330fea7aa4d1ef3f282c2c23193892b61878ba759cd9ef8e23e7f17d",
+    "models/tft_best_model.ckpt": "3b0fde570ad83ff4ab70a4b668652c41389d0630def4354520048f941d32d491",
+    "models/training_dataset.pkl": "81441e1cbf792a9a89fbe370e2af2dedef6edece12c3dafc29a7c0441efe3449"
+  }
+}

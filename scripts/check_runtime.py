@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -49,6 +51,10 @@ MODEL_FILES = (
     "rl_optimizer_redispatch_gen_39.zip",
     "rl_optimizer_shed_load_118.zip",
     "rl_optimizer_redispatch_gen_118.zip",
+    "rl_optimizer_shed_load_39_rewards.csv",
+    "rl_optimizer_redispatch_gen_39_rewards.csv",
+    "rl_optimizer_shed_load_118_rewards.csv",
+    "rl_optimizer_redispatch_gen_118_rewards.csv",
     "tft_best_model.ckpt",
     "training_dataset.pkl",
 )
@@ -87,13 +93,32 @@ def inspect_policy_metadata(path: Path) -> str:
     return "; ".join(selected) if selected else "metadata present"
 
 
-def check_files(base: Path, names: tuple[str, ...], *, offline: bool) -> tuple[int, int]:
-    present = missing = 0
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def check_files(base: Path, names: tuple[str, ...], *, offline: bool, manifest: dict[str, str]) -> tuple[int, int, int]:
+    present = missing = mismatched = 0
     for name in names:
         path = base / name
         if path.is_file() and not path.is_symlink():
             present += 1
-            detail = f"{path.stat().st_size} bytes"
+            relative = path.relative_to(ROOT).as_posix()
+            expected = manifest.get(relative)
+            actual = sha256_file(path)
+            if expected is None:
+                mismatched += 1
+                print(f"MISMATCH {relative} (no trusted source digest recorded)")
+                continue
+            if actual != expected:
+                mismatched += 1
+                print(f"MISMATCH {relative} (SHA-256 differs from source archive)")
+                continue
+            detail = f"{path.stat().st_size} bytes; SHA-256 verified"
             if path.suffix == ".zip" and path.name.startswith("rl_optimizer_"):
                 detail += "; " + inspect_policy_metadata(path)
             print(f"OK      {path.relative_to(ROOT)} ({detail})")
@@ -101,7 +126,7 @@ def check_files(base: Path, names: tuple[str, ...], *, offline: bool) -> tuple[i
             missing += 1
             severity = "INFO" if offline else "MISSING"
             print(f"{severity:<7} {path.relative_to(ROOT)}")
-    return present, missing
+    return present, missing, mismatched
 
 
 def main() -> int:
@@ -109,6 +134,15 @@ def main() -> int:
     parser.add_argument("--offline", action="store_true", help="Do not access networks; report absent artifacts without failing")
     args = parser.parse_args()
     paths = runtime_paths({})
+    manifest_path = ROOT / "docs" / "ARTIFACT_MANIFEST.json"
+    try:
+        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = manifest_data["sha256"]
+        if not isinstance(manifest, dict) or any(not isinstance(path, str) or not isinstance(digest, str) for path, digest in manifest.items()):
+            raise ValueError("manifest sha256 must map paths to digest strings")
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        print(f"MISSING invalid artifact manifest: {exc}")
+        return 1
     missing_required = False
     for package, (module, required) in PACKAGES.items():
         available, version = check_package(package, module)
@@ -117,9 +151,9 @@ def main() -> int:
             missing_required = True
 
     print("Input data and RAG artifacts:")
-    _, missing_inputs = check_files(paths.data, INPUT_FILES, offline=args.offline)
+    _, missing_inputs, mismatched_inputs = check_files(paths.data, INPUT_FILES, offline=args.offline, manifest=manifest)
     print("Model artifacts:")
-    _, missing_models = check_files(paths.models, MODEL_FILES, offline=args.offline)
+    _, missing_models, mismatched_models = check_files(paths.models, MODEL_FILES, offline=args.offline, manifest=manifest)
 
     total_bytes = sum((base / name).stat().st_size for base, names in ((paths.data, INPUT_FILES), (paths.models, MODEL_FILES)) for name in names if (base / name).is_file())
     memory = physical_memory_bytes()
@@ -130,7 +164,7 @@ def main() -> int:
         if total_bytes > memory // 4:
             print("WARNING artifact files exceed one quarter of physical memory; inference can require additional RAM")
 
-    if missing_required or (not args.offline and (missing_inputs or missing_models)):
+    if mismatched_inputs or mismatched_models or missing_required or (not args.offline and (missing_inputs or missing_models)):
         return 1
     return 0
 
