@@ -40,3 +40,10 @@ def test_services_share_only_private_persistent_network_paths() -> None:
     assert "ports:\n      - \"127.0.0.1:${SWING_HTTPS_PORT:-8443}:443\"" in compose
     assert "SWING_ADMIN_TOKEN: ${SWING_ADMIN_TOKEN:?" in compose
     assert "SWING_INTERNAL_TWIN_TOKEN: ${SWING_INTERNAL_TWIN_TOKEN:?" in compose
+
+
+def test_containers_drop_capabilities_and_tls_proxy_keeps_only_bind_capability() -> None:
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert compose.count('security_opt: ["no-new-privileges:true"]') == 3
+    assert compose.count("cap_drop: [ALL]") == 3
+    assert "cap_add: [NET_BIND_SERVICE]" in compose

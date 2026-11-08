@@ -3,6 +3,7 @@ function publicServiceBase(configKey, globalKey, localPort) {
   let configured = config[configKey] || window[globalKey];
   const localPage = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
   if (!configured && localPage) configured = `http://127.0.0.1:${localPort}`;
+  if (!configured && !localPage) configured = new URL(configKey === 'agentApiBase' ? '/api/agent' : '/api/twin', window.location.origin).href;
   if (typeof configured !== 'string' || !configured.trim()) throw new Error(`Public ${configKey} is not configured`);
   const url = new URL(configured, window.location.href);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error(`Invalid public ${configKey}`);

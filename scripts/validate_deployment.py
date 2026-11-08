@@ -36,6 +36,10 @@ def validate() -> list[str]:
         errors.append("proxy image must pin the official Nginx image by digest")
     if 'entrypoint: ["nginx"]' not in compose or 'command: ["-g", "daemon off;"]' not in compose:
         errors.append("read-only Nginx config must bypass image entrypoint mutation scripts")
+    if compose.count('security_opt: ["no-new-privileges:true"]') != 3 or compose.count("cap_drop: [ALL]") != 3:
+        errors.append("all containers must disable privilege escalation and drop ambient capabilities")
+    if "cap_add: [NET_BIND_SERVICE]" not in compose:
+        errors.append("TLS proxy must retain only the capability needed to bind port 443")
     if "swing-state:/var/lib/swing" not in compose:
         errors.append("both services must mount persistent event storage")
     if "127.0.0.1:${SWING_HTTPS_PORT:-8443}:443" not in compose:

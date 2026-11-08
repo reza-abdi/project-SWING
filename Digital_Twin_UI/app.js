@@ -1,6 +1,10 @@
 /* Digital Twin visualization only. window.GRID_ID is set by the page. */
 const GRID_ID = window.GRID_ID;
-const API_URL = "http://127.0.0.1:8001";
+const localTwinPage = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+const configuredTwinApi = window.SWING_PUBLIC_CONFIG?.twinApiBase || window.SWING_PUBLIC_TWIN_API_BASE;
+const API_URL = configuredTwinApi || (localTwinPage ? "http://127.0.0.1:8001" : new URL('/api/twin', window.location.origin).href);
+const TELEMETRY_WS_BASE = window.SWING_PUBLIC_CONFIG?.twinWsBase || window.SWING_PUBLIC_TWIN_WS_BASE ||
+  (localTwinPage ? `${API_URL.replace(/^http/, 'ws')}/ws/telemetry` : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/twin`);
 let cy = null;
 let latestGridState = null;
 let selectedBus = null;
@@ -581,7 +585,7 @@ function connectTelemetry() {
     reconnectTimer = null;
   }
   const generation = ++socketGeneration;
-  const socketUrl = `${API_URL.replace(/^http/, 'ws')}/ws/telemetry/${encodeURIComponent(GRID_ID)}`;
+  const socketUrl = `${TELEMETRY_WS_BASE.replace(/\/+$/, '')}/${encodeURIComponent(GRID_ID)}`;
   let socket;
   try {
     socket = new window.WebSocket(socketUrl);
