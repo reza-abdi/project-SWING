@@ -1,0 +1,43 @@
+FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    SWING_OPERATION_MODE=simulation \
+    SWING_EVENT_DB_PATH=/var/lib/swing/events.sqlite \
+    SWING_DATA_DIR=/app/data \
+    SWING_MODEL_DIR=/app/models \
+    SWING_FAISS_DIR=/app/data/knowledge_base/faiss_index
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libgomp1 libstdc++6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 swing \
+    && useradd --uid 10001 --gid swing --no-create-home --shell /usr/sbin/nologin swing \
+    && mkdir -p /var/lib/swing /app/data/raw_data /app/data/processed_data \
+       /app/data/knowledge_base /app/data/knowledge_base/faiss_index /app/models \
+    && chown -R swing:swing /var/lib/swing /app/data /app/models
+
+COPY requirements.txt ./requirements.txt
+RUN python -m pip install -r requirements.txt
+
+COPY modules ./modules
+COPY data/raw_data/hourlyLoadDataIndia.csv data/raw_data/Northern_Region_Hourly_Weather_2019_2024.csv ./data/raw_data/
+COPY data/processed_data/tft_ready_data.csv ./data/processed_data/
+COPY data/knowledge_base/IEGC_Code.pdf ./data/knowledge_base/
+COPY models/lightgbm_q_10.txt models/lightgbm_q_50.txt models/lightgbm_q_90.txt \
+     models/tft_best_model.ckpt models/training_dataset.pkl ./models/
+
+# The supplied FAISS pickle has no trusted manifest. Rebuild and pin the index before enabling retrieval.
+RUN chmod 700 /app/data/knowledge_base/faiss_index \
+    && chmod -R go-w /app/data /app/models \
+    && chown -R swing:swing /app/data /app/models /var/lib/swing
+
+USER 10001:10001
+EXPOSE 8002
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+  CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8002/health', timeout=5).read()" || exit 1
+
+CMD ["uvicorn", "modules.ai_agents.agent_api:app", "--host", "0.0.0.0", "--port", "8002", "--proxy-headers", "--forwarded-allow-ips", "172.29.245.10"]
