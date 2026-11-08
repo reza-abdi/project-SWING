@@ -1,0 +1,95 @@
+name: project-swing
+
+services:
+  twin:
+    image: project-swing/twin:${SWING_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile.twin
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    environment:
+      SWING_OPERATION_MODE: simulation
+      SWING_TWIN_BIND_HOST: 0.0.0.0
+      SWING_TWIN_PORT: "8001"
+      SWING_EVENT_DB_PATH: /var/lib/swing/events.sqlite
+      SWING_MODEL_DIR: /app/models
+      SWING_AUTH_MODE: reverse_proxy
+      SWING_ALLOWED_ORIGINS: ${SWING_ALLOWED_ORIGINS:?Set exact HTTPS browser origins}
+      SWING_ADMIN_TOKEN: ${SWING_ADMIN_TOKEN:?Set an administrator token}
+      SWING_INTERNAL_TWIN_TOKEN: ${SWING_INTERNAL_TWIN_TOKEN:?Set a separate internal Twin token}
+    volumes:
+      - swing-state:/var/lib/swing
+    networks: [backend]
+
+  agent:
+    image: project-swing/agent:${SWING_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    environment:
+      SWING_OPERATION_MODE: simulation
+      SWING_AGENT_BIND_HOST: 0.0.0.0
+      SWING_AGENT_PORT: "8002"
+      DIGITAL_TWIN_API_URL: http://twin:8001
+      SWING_EVENT_DB_PATH: /var/lib/swing/events.sqlite
+      SWING_DATA_DIR: /app/data
+      SWING_MODEL_DIR: /app/models
+      SWING_FAISS_DIR: /app/data/knowledge_base/faiss_index
+      SWING_AUTH_MODE: reverse_proxy
+      SWING_ALLOWED_ORIGINS: ${SWING_ALLOWED_ORIGINS:?Set exact HTTPS browser origins}
+      SWING_OPERATOR_TOKEN: ${SWING_OPERATOR_TOKEN:?Set an operator token}
+      SWING_INTERNAL_TWIN_TOKEN: ${SWING_INTERNAL_TWIN_TOKEN:?Set a separate internal Twin token}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    volumes:
+      - swing-state:/var/lib/swing
+    depends_on:
+      twin:
+        condition: service_healthy
+    networks: [backend, egress]
+
+  proxy:
+    image: nginx:1.30.6-alpine3.24@sha256:0e52bd054126cdc040b1276c0af347aeb02a41b9cfe305d6094767ac30e97949
+    entrypoint: ["nginx"]
+    command: ["-g", "daemon off;"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,size=64m
+      - /var/run:rw,noexec,nosuid,size=4m
+      - /tmp:rw,noexec,nosuid,size=16m
+    ports:
+      - "127.0.0.1:${SWING_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./deploy/nginx/production.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/twin.conf:/etc/nginx/twin.conf:ro
+      - ./deploy/nginx/agent.conf:/etc/nginx/agent.conf:ro
+      - ./Digital_Twin_UI:/usr/share/nginx/html/twin:ro
+      - ./Agent_Dashboard_UI:/usr/share/nginx/html/agent:ro
+      - ./deploy/certs:/run/tls:ro
+    depends_on:
+      twin:
+        condition: service_healthy
+      agent:
+        condition: service_healthy
+    networks:
+      backend:
+        ipv4_address: 172.29.245.10
+
+volumes:
+  swing-state:
+
+networks:
+  backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.29.245.0/24
+  egress:
+    driver: bridge
