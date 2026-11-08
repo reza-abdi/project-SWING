@@ -3,7 +3,9 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = process.cwd();
-const agentOrigin = 'http://agent.local';
+const agentOrigin = 'http://localhost:3001';
+const agentApiOrigin = 'http://127.0.0.1:8002';
+const twinApiOrigin = 'http://127.0.0.1:8001';
 
 async function serveAgent(page) {
   await page.route('https://cdn.jsdelivr.net/**', (route) =>
@@ -22,7 +24,7 @@ async function serveAgent(page) {
   });
   await page.addInitScript(() => {
     (window as any).SWING_PUBLIC_CONFIG = {
-      agentApiBase: 'http://agent-api.local', twinApiBase: 'http://twin-api.local',
+      agentApiBase: 'http://127.0.0.1:8002', twinApiBase: 'http://127.0.0.1:8001',
     };
     (window as any).Chart = class {
       data: any;
@@ -43,7 +45,7 @@ test('agent home links to each dashboard page', async ({ page }) => {
 test('forecast page uses the read-only endpoint and renders its model source', async ({ page }) => {
   await serveAgent(page);
   let proposeCalls = 0;
-  await page.route('http://agent-api.local/**', async (route) => {
+  await page.route(`${agentApiOrigin}/**`, async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname.startsWith('/propose/')) proposeCalls += 1;
     if (url.pathname.startsWith('/forecast/')) {
@@ -58,7 +60,7 @@ test('forecast page uses the read-only endpoint and renders its model source', a
 
 test('RL page displays trained and unavailable policy states from Twin status', async ({ page }) => {
   await serveAgent(page);
-  await page.route('http://twin-api.local/rl_status', (route) => route.fulfill({ status: 200, json: {
+  await page.route(`${twinApiOrigin}/rl_status`, (route) => route.fulfill({ status: 200, json: {
     '39': { shed_load: { trained: true, size_kb: 12.5, last_trained: '2026-01-01T00:00:00Z' }, redispatch_gen: { trained: false, error: 'missing' } },
     '118': { shed_load: { trained: false, error: 'invalid_or_incompatible_archive' }, redispatch_gen: { trained: false, error: 'missing' } },
   } }));
@@ -70,7 +72,7 @@ test('RL page displays trained and unavailable policy states from Twin status', 
 
 test('dashboard proposal failure is rendered as text', async ({ page }) => {
   await serveAgent(page);
-  await page.route('http://agent-api.local/propose/**', (route) => route.fulfill({ status: 503, json: { detail: 'offline' } }));
+  await page.route(`${agentApiOrigin}/propose/**`, (route) => route.fulfill({ status: 503, json: { detail: 'offline' } }));
   await page.goto(`${agentOrigin}/ai_dashboard.html`);
   await page.locator('#checkRisksBtn').click();
   await expect(page.locator('#agentBriefText')).toContainText('offline');

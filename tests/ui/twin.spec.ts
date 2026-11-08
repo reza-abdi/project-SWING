@@ -11,7 +11,7 @@ declare global {
 }
 
 const root = process.cwd();
-const apiOrigin = 'http://127.0.0.1:8001';
+const apiOrigin = 'http://twin.local/api/twin';
 
 const cytoscapeStub = `
 (() => {
@@ -68,6 +68,7 @@ async function installTwinMocks(page) {
   });
   await page.route(`${apiOrigin}/**`, async (route) => {
     const url = new URL(route.request().url());
+    url.pathname = url.pathname.replace(/^\/api\/twin/, '') || '/';
     const headers = { 'access-control-allow-origin': 'http://twin.local', 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-allow-headers': 'Content-Type' };
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
     if (url.pathname === '/topology') {

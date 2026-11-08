@@ -54,7 +54,8 @@ def test_read_and_optimizer_routes(method, args, path, params, body):
     assert kwargs["timeout"] == 10.0
 
 
-def test_mutation_route_mapping_is_exact():
+def test_mutation_route_mapping_is_exact(monkeypatch):
+    monkeypatch.setenv("SWING_INTERNAL_TWIN_TOKEN", "internal-test-token")
     session = Session(); client = TwinClient("http://twin.local", session=session)
     client.change_load("118", 4, 75.5)
     client.redispatch_gen("39", 2, 1.25)
@@ -69,6 +70,7 @@ def test_mutation_route_mapping_is_exact():
     for (args, kwargs), (method, url, params) in zip(session.calls, expected):
         assert args[:2] == (method, url)
         assert kwargs["params"] == params
+        assert kwargs["headers"] == {"Authorization": "Bearer internal-test-token"}
 
 
 @pytest.mark.parametrize("failure", [requests.Timeout("timeout"), requests.HTTPError("server error")])

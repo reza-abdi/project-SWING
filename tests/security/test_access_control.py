@@ -50,6 +50,11 @@ def test_admin_can_pass_authorization_gate_for_direct_twin_route(monkeypatch):
                          headers={"Authorization": "Bearer test-admin-token"})
     assert response.status_code != 403
 
+    monkeypatch.setenv("SWING_INTERNAL_TWIN_TOKEN", "test-internal-token")
+    internal = twin.post("/stress_test/39", json={"load_multiplier": 1.0, "derate_multiplier": 1.0},
+                         headers={"Authorization": "Bearer test-internal-token"})
+    assert internal.status_code != 403
+
 
 def test_prompt_injection_chat_does_not_call_actuation(monkeypatch):
     configure_tokens(monkeypatch)

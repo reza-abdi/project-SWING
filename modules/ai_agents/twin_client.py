@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -51,11 +52,18 @@ class TwinClient:
 
     def _request(self, method: str, path: str, *, params=None, json_body=None) -> dict[str, Any]:
         try:
+            headers = None
+            internal_token = os.environ.get("SWING_INTERNAL_TWIN_TOKEN", "")
+            mutation_routes = ("/change_load/", "/redispatch_gen/", "/inject_fault/", "/restore_line/",
+                               "/redistribute_load/", "/stress_test/")
+            if method.upper() == "POST" and path.startswith(mutation_routes) and internal_token:
+                headers = {"Authorization": f"Bearer {internal_token}"}
             response = self.session.request(
                 method,
                 f"{self.base_url}{path}",
                 params=params,
                 json=json_body,
+                headers=headers,
                 timeout=self.timeout_seconds,
             )
             response.raise_for_status()

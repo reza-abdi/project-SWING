@@ -139,7 +139,7 @@ def _authorized(request: Request, role: str) -> bool:
     scheme, _, supplied = header.partition(" ")
     if scheme.lower() != "bearer" or not supplied:
         return False
-    roles = ("admin",) if role == "admin" else ("operator", "admin")
+    roles = ("admin", "internal") if role == "admin" else ("operator", "admin")
     for candidate_role in roles:
         expected = os.environ.get(f"SWING_{candidate_role.upper()}_TOKEN", "")
         if expected and hmac.compare_digest(supplied, expected):

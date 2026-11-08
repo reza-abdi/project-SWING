@@ -16,8 +16,7 @@ class TestClientSession:
     def __init__(self, client):
         self.client = client
 
-    def request(self, method, url, *, params=None, json=None, timeout=None):
-        headers = {"Authorization": "Bearer integration-admin"}
+    def request(self, method, url, *, params=None, json=None, headers=None, timeout=None):
         return self.client.request(method, urlsplit(url).path, params=params, json=json, headers=headers)
 
 
@@ -25,6 +24,7 @@ def test_propose_validate_approve_execute_across_services(monkeypatch, tmp_path)
     monkeypatch.setenv("SWING_AUTH_MODE", "reverse_proxy")
     monkeypatch.setenv("SWING_OPERATOR_TOKEN", "integration-operator")
     monkeypatch.setenv("SWING_ADMIN_TOKEN", "integration-admin")
+    monkeypatch.setenv("SWING_INTERNAL_TWIN_TOKEN", "integration-internal")
     monkeypatch.setenv("SWING_ALLOWED_ORIGINS", "https://integration.example")
     monkeypatch.setattr(proposal_store, "runtime_paths", lambda: SimpleNamespace(event_db=tmp_path / "proposals.sqlite"))
     monkeypatch.setattr(agent_api, "log_event", lambda *args, **kwargs: None)
