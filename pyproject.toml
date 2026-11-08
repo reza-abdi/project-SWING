@@ -1,6 +1,6 @@
 [project]
 name = "project-swing"
-version = "0.0.0"
+version = "1.0.0"
 description = "Project SWING simulation and decision-support system"
 requires-python = ">=3.12,<3.13"
 
