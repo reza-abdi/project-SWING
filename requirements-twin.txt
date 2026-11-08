@@ -1,0 +1,6 @@
+fastapi==0.139.2
+numpy==2.3.5
+pandas==2.3.3
+pandapower==3.4.0
+pydantic==2.13.4
+uvicorn==0.51.0
