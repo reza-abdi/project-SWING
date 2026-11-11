@@ -1,5 +1,4 @@
-# Project SWING
-
+# Project SWING (Smart Wide-area INtelligent Grid)
 **AI-Driven Autonomous Grid Resilience and Adaptive Power Flow Optimization Platform**
 
 ![Project SWING Snapshot](Project_SWING.png)
@@ -10,94 +9,186 @@ The Digital Twin is infrastructure, not the project itself. It provides the phys
 
 ---
 
-## Capabilities
+## 1. Architecture & Separation of Concerns
 
-- Interactive IEEE 39/118 topology, status, and telemetry views.
-- Scenario simulation, contingency analysis, and optimization endpoints.
-- Load forecasting with LightGBM quantile models and an optional TFT model.
-- AI-assisted recommendations with validation and approval workflow.
-- Optional regulatory retrieval and Gemini integration when configured.
-- Local development APIs, security checks, browser tests, and an optional single-host Docker Compose deployment.
+The system is deliberately split into independent services that communicate **only over HTTP**, never via direct Python imports of each other's internals. 
 
-Online AI and model inference depend on the installed packages and verified artifacts. If a model or provider is unavailable, the application should fail safely or use its documented fallback; never treat an unavailable result as an approved action.
-
-## Architecture
-
-```text
-Browser ── Twin UI ──┐                    ┌─ Digital Twin API ── IEEE simulations
-                     ├─ same-origin proxy ┤                     └─ SQLite event log
-Browser ── Agent UI ─┘                    └─ Agent API ────────┘
-                                                            └─ optional Gemini
+```
+┌──────────────────────────┐        HTTP         ┌──────────────────────────────┐
+│   DIGITAL TWIN SERVICE   │  <────────────────> │   AI ARCHITECTURE SERVICE    │
+│   modules/physics_engine │                     │   modules/ai_agents          │
+│   api.py  (port 8001)    │                     │   agent_api.py (port 8002)   │
+│                          │                     │                              │
+│ - pandapower IEEE-39/118 │                     │ - LangGraph multi-agent      │
+│ - Newton-Raphson AC PF   │                     │   pipeline                   │
+│ - GRI / security metrics │                     │ - Gemini (fallback chain)    │
+│ - N-1 contingency scan   │                     │ - LightGBM + TFT forecasting │
+│ - Physics validator/     │                     │ - RL-assisted optimizer      │
+│   optimizer endpoints    │                     │   (SAC -> bisection search)  │
+│ - WebSocket telemetry    │                     │ - FAISS RAG (IEGC compliance)│
+└──────────────────────────┘                     └──────────────────────────────┘
+            ▲                                                  ▲
+            │ HTTP/WS                                          │ HTTP
+            │                                                  │
+┌─────────────────────────┐                       ┌─────────────────────────────────┐
+│   Digital Twin UI       │                       │   Agent Dashboard UI            │
+│   (Digital_Twin_UI/)    │                       │   (Agent_Dashboard_UI/)         │
+│   Vanilla HTML/CSS/JS,  │                       │   Agent Copilot, Ask the Grid,  │
+│   Cytoscape.js graph    │                       │   RL Status                     │
+└─────────────────────────┘                       └─────────────────────────────────┘
+Either service can be redeployed independently, pointed at a different counterpart,
+or run on a separate machine without touching the other's code.
+The only coupling is the DIGITAL_TWIN_API_URL environment variable.
 ```
 
-The Twin and Agent are separate Python services. In Compose, only the Nginx TLS proxy publishes a loopback-bound host port; the Agent reaches the Twin over a private Docker network. Both services mount the same persistent SQLite volume. This is a single-host design, not a multi-host database architecture.
+## 2. The Multi-Agent Pipeline (LangGraph)
 
-## Requirements
+Observer → Forecast → Risk Assessment → RAG Retrieval → Decision → Physics Validator → Operator Brief
+              (skipped if risk is LOW/WATCH - routes straight to a no-action or monitor brief)
 
-- Python 3.12 (64-bit); a compatible native OpenMP runtime for LightGBM.
-- Node.js 22 and npm for browser tests.
-- Docker Engine with the Compose plugin only for container deployment.
-- Optional Google API key for online Gemini features.
+- *Observer Agent*: Reads the Digital Twin's live Grid Resilience Index (GRI) and security snapshot. If the grid is collapsed or lines are actively overloaded, risk assessment escalates immediately regardless of any forecast.
 
-The supplied SAC archives record Python 3.10 training metadata. Their inference compatibility on Python 3.12 must be verified before relying on them. See [artifact policy](docs/ARTIFACT_POLICY.md) and [preservation matrix](docs/PRESERVATION_MATRIX.md).
+- *Forecast Agent*: Attempts a multi-horizon Temporal Fusion Transformer (TFT) forecast, falling back to a single-horizon LightGBM quantile model. SHAP feature importance is always computed from the LightGBM model for explainability.
 
-## Local development
+- *Risk Assessment Agent*: Classifies risk (CRITICAL / HIGH / MEDIUM / WATCH / LOW) based on live snapshots and predictive p90 bounds.
 
-Create an isolated Python environment, install dependencies, and run each service in its own terminal:
+- *RAG Retrieval*: Grounds the Decision Agent's justification in real Indian Electricity Grid Code (IEGC) excerpts via FAISS.
 
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python scripts/run_twin.py
+- *Decision Agent*: Proposes a strategy (action type and target buses), never the exact MW value.
+
+- *Optimization Engine*: Computes the exact MW amount via an RL policy (SAC) or bisection search fallback.
+
+- *Physics Validator Agent*: Re-tests the proposal against a real AC power flow on a deep copy of the live grid. Nothing is trusted directly.
+
+- *Operator Brief*: The final human-readable recommendation, including SHAP drivers, expected GRI changes, and an explicit Approve/Reject trigger. Nothing is executed without human approval.
+
+
+## 3. Repository Structure
+
 ```
 
-In another terminal, activate the same environment and run:
-
-```bash
-python scripts/run_agent.py
+├── Agent_Dashboard_UI/        # AI Copilot, Conversational Chat, and Forecast HTML Dashboards
+├── Digital_Twin_UI/           # IEEE-39/118 Cytoscape.js Physics Dashboards & Control Interfaces
+├── data/
+│   ├── knowledge_base/        # Indian Electricity Grid Code (IEGC) PDF and FAISS Vector Index
+│   ├── raw_data/              # hourlyLoadDataIndia.csv, Northern_Region_Weather.csv
+│   └── processed_data/        # tft_ready_data.csv (Engineered statistical features)
+├── models/                    # Serialized Machine Learning Assets (.ckpt, .zip, .txt, .csv logs)
+├── modules/
+│   ├── ai_agents/             # LangGraph Multi-Agent Core, API routing, and RAG Builder
+│   ├── forecasting/           # LightGBM Quantile Regressors and TFT Predictors
+│   ├── optimization_engine/   # Reinforcement Learning Gym Environments and SAC Optimizer
+│   └── physics_engine/        # Pandapower Twin, FastAPI Endpoints, and Scenario Stress Engine
+│   └── event_store.py         # Shared SQLite Event Timeline logging both Physics and AI actions
+├── notebooks/                 # Cloud Training Logic (01_TFT_Multi_Horizon, 02_RL_Optimization)
+├── scripts/                   # Local RL Training (train_rl_agent.py) and Model Evaluation metrics
+├── main.py                    # Multi-process Development Orchestrator for local deployment
+└── requirements.txt           # Explicit Python dependencies and library versions
 ```
 
-The default API addresses are `http://127.0.0.1:8001` (Twin) and `http://127.0.0.1:8002` (Agent). Serve `Digital_Twin_UI/` and `Agent_Dashboard_UI/` from local static web servers to use the dashboards. API docs are at `/docs` on each service. Local auth permits loopback requests only.
 
-Copy `.env.example` to an untracked `.env` only when overrides are needed. Do not put secrets in browser code, notebooks, Git, or build arguments. See [configuration](docs/CONFIGURATION.md).
+## 4. Key Features & Scoping Decisions
 
-## Checks
+**Digital Twin Engine**
+- *IEEE 39 & 118-Bus*: Modeled via pandapower (Newton-Raphson AC power flow).
 
-```bash
-python -m compileall -q main.py modules scripts tests
-python scripts/security_audit.py --tracked --self-test
-pytest -q
-npm ci
-npx playwright test
+- *N-1 Contingency Scanner*: Runs asynchronously on a background worker thread (asyncio.to_thread) to prevent event-loop freezing.
+
+- *Idempotent Stress Testing*: Sliders scale load and thermal capacities based on an absolute percentage of the original nameplate baseline, preventing compounding errors.
+
+- *Strict Collapse Detection*: A non-convergent power flow is explicitly caught as collapsed: true (GRI = 0.0), not silently ignored as empty matrices.
+
+**Reinforcement Learning (SAC/PPO)**
+- *Grid-Size Specific*: Policies are strictly bound to their observation dimensions. Four independent models are trained and saved: (SHED_LOAD, REDISPATCH_GEN) × (IEEE-39, IEEE-118).
+
+- *Single-Step Episodes*: Deliberately designed as a contextual-bandit-shaped MDP. Outcome quality lives entirely in the reward magnitude (heavily penalizing remaining overloads quadratically), not in episode continuity.
+
+## 5. Setup & Installation
+
+1. Install Core Dependencies
+
+```
+pip install -r requirements.txt
+```
+2. Environment Configuration
+
+Create a .env file at the project root:
+
+```
+GOOGLE_API_KEY=your_gemini_api_key_here
+```
+3. Initialize the Vector Database (RAG)
+
+Ensure your source PDFs are located in data/knowledge_base/, then build the FAISS index:
+
+```
+python modules/ai_agents/rag_builder.py
 ```
 
-Read-only local service smoke check (start all four local services first):
+6. Execution & Tooling
 
-```bash
-python scripts/smoke_test.py --local --no-mutation
+Launch the Platform (Local Development).
+
+The orchestrator script launches all APIs and UI static servers concurrently:
+
+```
+python main.py
 ```
 
-The smoke script targets loopback APIs and static pages on ports 3000/3001. It does not run a production deployment. Deployment bundle preflight is static only:
+- *Digital Twin UI*: http://127.0.0.1:3000/home.html
 
-```bash
-python scripts/validate_deployment.py
+- *Agent Dashboard UI*: http://127.0.0.1:3001/ai_home.html
+
+**Evaluate Metrics**
+
+Run the empirical scoring script to evaluate LightGBM RMSE, SAC convergence rates, and RAG hallucination metrics:
+
+```
+python scripts/evaluate_metrics.py
 ```
 
-## Container deployment
+**Offline RL Training**
 
-The Compose deployment is an optional single-host TLS blueprint. It needs Docker, a protected host `.env`, and valid certificate files in the ignored `deploy/certs/` directory. See [secret setup](deploy/SECRETS.md) and [backup/rollback](deploy/ROLLBACK.md).
+Policies must be trained manually per grid/action type. 
 
-Remote APIs currently use static bearer tokens, and the browser dashboards do not provide a login or token-entry flow. Therefore, general-user, write-enabled browser deployment is **not ready**. The deployment workflow is manual and protected by the GitHub `production` environment; configure its reviewers, host key, SSH secrets, host `.env`, and TLS assets before use. Never run it against a host without explicit deployment authorization.
+*Note*: For cloud-based execution, use the interactive notebook located at `notebooks/02_RL_Optimization_Cloud_Training.ipynb` .
 
-The example Nginx server name is `swing.example.com`; replace it with the real DNS name and ensure the certificate and `SWING_ALLOWED_ORIGINS` agree. The workflow's host-local TLS smoke command currently expects port 8443 and the example hostname. Update that command if deployment settings differ. Do not claim deployment success from a static preflight.
+```
+python scripts/train_rl_agent.py --grid 118 --action SHED_LOAD
+```
 
-## Configuration and security
+**TFT Multi-Horizon Training**
 
-Important settings include `SWING_OPERATION_MODE`, `SWING_TWIN_BIND_HOST`, `SWING_AGENT_BIND_HOST`, `DIGITAL_TWIN_API_URL`, `SWING_EVENT_DB_PATH`, `SWING_DATA_DIR`, `SWING_MODEL_DIR`, `SWING_FAISS_DIR`, `SWING_ALLOWED_ORIGINS`, `SWING_AUTH_MODE`, the three service tokens, and optional `GOOGLE_API_KEY` / `SWING_GEMINI_MODEL_*` values. `.env.example` lists the available settings; [configuration](docs/CONFIGURATION.md) describes their current behavior.
+To train or fine-tune the Temporal Fusion Transformer on cloud GPUs (T4/A100), use the interactive notebook located at `notebooks/01_TFT_Multi_Horizon_Cloud_Training.ipynb`.
 
-`SWING_OPERATION_MODE=simulation` is the only supported mode. The current remote auth implementation validates static bearer tokens; OIDC-related variables are reserved and do not activate OIDC. Keep Twin administrative credentials out of the Agent and browser. See the [threat model](docs/THREAT_MODEL.md), [API contract](docs/API_CONTRACT.md), [attributions](docs/ATTRIBUTIONS.md), and [regulatory source notes](docs/REGULATORY_SOURCES.md).
 
-## License and third-party material
+## 7. Maintenance & Service Continuation
 
-See [LICENSE](LICENSE) for the repository license. The project owner authorized public redistribution of the supplied archive. The source PDF, datasets, model artifacts, and third-party libraries may retain separate terms; the repository license does not override them. See [artifact policy](docs/ARTIFACT_POLICY.md) and [attributions](docs/ATTRIBUTIONS.md).
+**LLM Architecture**
+The AI Architecture Service utilizes a multi-tiered fallback chain to ensure high availability and gracefully handle API rate limits (HTTP 429) or transient network errors. This routing is handled transparently via LangChain's .with_fallbacks() method.
+
+Current Fallback Chain (As of July 2026):
+
+- *Primary*: gemini-3.6-flash (Latest stable model)
+
+- *Secondary*: gemini-3.5-flash (Previous frontier model)
+
+- *Tertiary*: gemini-3.5-flash-lite (Fastest, cost-effective safety net)
+
+**Maintenance Requirement: Model Deprecations**
+Google regularly updates the Gemini model family and retires older endpoints. If an alias in the fallback chain points to a retired endpoint, the LangChain invocation will fail.
+
+- *Monitor*: Check the official Gemini API Deprecations page for upcoming shutdown dates.
+
+- *Update*: Navigate to modules/ai_agents/agent_api.py and update the model="..." strings within the ChatGoogleGenerativeAI declarations to the newest active releases.
+
+
+## 8. Known Limitations
+- *Single-Action Optimization Ceiling*: Both the RL optimizer and the bisection search compute the best single action (one bus, one MW value). At severe overloads, a single action may be mathematically insufficient to clear the constraint. The pipeline correctly reports VALIDATION_EXHAUSTED rather than hallucinating an invalid solution.
+
+- *LOAD_REDISTRIBUTION Limit*: This action shifts load between two discrete buses while determining a continuous MW amount. This hybrid action space does not fit the current RL formulation and relies entirely on the bisection search fallback.
+
+- *TFT Historical Window*: The TFT's "recent history" window reads the tail of the historical training CSV (tft_ready_data.csv). It is a pragmatic stand-in to exercise multi-horizon bounds end-to-end, not a live streaming telemetry buffer.
+
+- *LLM Rate Limits*: Free-tier Gemini limits are real. The multi-model fallback chain and a hardcoded autopilot fallback successfully bypass quota exhaustion to ensure the Reinforcement Learning pipeline remains testable during API throttling.
+
