@@ -1,8 +1,14 @@
 # Project SWING
 
-Project SWING is a research simulator and decision-support prototype for IEEE 39-bus and IEEE 118-bus power-grid cases. It combines a pandapower Digital Twin, forecasting and optimization components, an AI-assisted proposal service, and two browser dashboards.
+**AI-Driven Autonomous Grid Resilience and Adaptive Power Flow Optimization Platform**
 
-**Simulation only.** The APIs change an in-memory simulation and its local event log. This project is not connected to grid equipment and must not be used to control real infrastructure. AI output is a proposal; it requires explicit operator review and server-side validation.
+![Project SWING Snapshot](Project_SWING.png)
+
+Project SWING is an AI-powered operating platform for electrical grid resilience. It combines a high-fidelity power-system Digital Twin, statistical and deep-learning forecasting, a multi-agent LangGraph decision pipeline, a reinforcement-learning-assisted optimization engine, and a Retrieval-Augmented Generation (RAG) compliance layer - all with a human operator kept firmly in the loop.
+
+The Digital Twin is infrastructure, not the project itself. It provides the physical ground truth every AI component reasons against. Nothing bypasses it, and every proposed control action is re-validated against real AC power flow before it is ever shown to an operator.
+
+---
 
 ## Capabilities
 
